@@ -12,7 +12,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_list_sections` | Sections in a notebook, including section groups |
 | `onenote_list_pages` | Pages in a section |
 | `onenote_get_notebook_tree` | Notebooks, groups, sections, and page titles |
-| `onenote_get_page` | Page as Markdown, with image callback IDs |
+| `onenote_get_page` | Page as Markdown: headings, nested lists, tables, code blocks, inline formatting, and image callback IDs |
 | `onenote_get_page_by_link` | Page from a "Copy link to page" link (`onenote:` or web link) |
 | `onenote_get_page_raw` | Page as OneNote XML |
 | `onenote_get_page_images` | Images on a page |
@@ -20,6 +20,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_search` | Search all notebooks |
 | `onenote_search_in_notebook` | Search one notebook |
 | `onenote_create_page` | New page from HTML: headings, nested lists, tables, code |
+| `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown. |
 
 ## Requirements
 
@@ -42,7 +43,27 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 
 - Search uses Windows Search, so it finds indexed pages only.
 - Images OneNote hasn't downloaded yet return an error. Open the page in OneNote desktop, then retry.
-- `onenote_get_page` drops heading levels and bullet markers.
+- Markdown that OneNote can't hold:
+  - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
+  - Numbered lists start at 1. OneNote numbers lists itself, so separate lists alternate between `1.` and `1)` in OneNote to restart.
+  - A hard line break splits a paragraph in two, and becomes a space in a list item. OneNote drops line breaks inside a paragraph.
+  - Images become links. Code blocks lose their language, and OneNote stores a tab in code as 8 spaces.
+  - Headings, tables, and code inside a quote lose the quote. Nested quotes flatten to one level.
+  - Bold that covers a whole table header cell is dropped, since the header row is already bold. So is italic that covers a whole h4 or h6 heading, since those styles are italic.
+
+## Tests
+
+```powershell
+dotnet test
+```
+
+Live tests run against OneNote desktop when `ONENOTE_LIVE_SECTION` is set. They create pages in that section and delete them permanently.
+
+```powershell
+$env:ONENOTE_LIVE_SECTION = "My Notebook/Test section"; dotnet test
+```
+
+Set `ONENOTE_LIVE_IMAGE_LINK` to a "Copy link to page" link to also test images.
 
 ## How it works
 

@@ -182,9 +182,34 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         [Description("Page title")] string title,
         [Description("""
             Optional HTML for the page body.
-            Block: <p>, <div>, <br>, <h1>-<h6>, <ul>/<ol>/<li> (nested OK), <table>/<tr>/<th>/<td>, <pre>, <hr>.
-            Inline: <b>, <i>, <u>, <s>, <sup>, <sub>, <code>, <a href>.
-            """)] string contentHtml = "")
+            Block: <p>, <div>, <br>, <h1>-<h6>, <ul>/<ol>/<li> (nested OK), <table>/<tr>/<th>/<td>, <pre>, <blockquote>, <hr>.
+            Inline: <b>, <i>, <u>, <s>, <sup>, <sub>, <code>, <a href>, <img> (becomes a link).
+            """)] string contentHtml = "") =>
+        CreatePageFromHtml(sectionId, title, contentHtml);
+
+    [McpServerTool(Name = "onenote_create_page_from_markdown", Destructive = false)]
+    [Description("""
+        Create a new page in a section from Markdown.
+        Supports headings, paragraphs, nested bullet and numbered lists, pipe tables, fenced code, blockquotes, rules, bold, italic, strikethrough, inline code, and links.
+        Images become links. onenote_get_page reads the page back as Markdown.
+        """)]
+    public string CreatePageFromMarkdown(
+        [Description("The section ID")] string sectionId,
+        [Description("Page content as Markdown")] string markdown,
+        [Description("Page title. Empty to use the Markdown's leading \"# \" heading, which is then left out of the body.")] string title = "")
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            (var heading, markdown) = MarkdownToOneNote.SplitTitle(markdown);
+            title = heading ?? throw new McpException("No title: pass a title or start the Markdown with a \"# \" heading");
+        }
+
+        return CreatePageFromHtml(sectionId, title, MarkdownToOneNote.ToHtml(markdown), fromMarkdown: true);
+    }
+
+    // Helpers
+
+    private string CreatePageFromHtml(string sectionId, string title, string contentHtml, bool fromMarkdown = false)
     {
         var pageId = oneNote.CreateNewPage(sectionId);
         try
@@ -194,7 +219,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
             titleText?.ReplaceNodes(new XCData(System.Net.WebUtility.HtmlEncode(title)));
             if (!string.IsNullOrWhiteSpace(contentHtml))
             {
-                HtmlToOneNote.AddToPage(page, contentHtml);
+                HtmlToOneNote.AddToPage(page, contentHtml, fromMarkdown);
             }
 
             oneNote.UpdatePageContent(page.ToString(SaveOptions.DisableFormatting));
@@ -208,8 +233,6 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
 
         return ToJson(new { Status = "created", PageId = pageId, Title = title });
     }
-
-    // Helpers
 
     private string SearchIn(string query, string notebookId)
     {

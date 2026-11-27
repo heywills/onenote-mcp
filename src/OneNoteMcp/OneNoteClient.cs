@@ -38,8 +38,9 @@ public sealed class OneNoteClient
     public void UpdatePageContent(string xml) =>
         Call(app => { app.UpdatePageContent(xml, DateTime.MinValue, XMLSchema.xs2013, false); return 0; });
 
-    public void DeleteHierarchy(string objectId) =>
-        Call(app => { app.DeleteHierarchy(objectId); return 0; });
+    /// <param name="permanently">Skip the notebook's recycle bin</param>
+    public void DeleteHierarchy(string objectId, bool permanently = false) =>
+        Call(app => { app.DeleteHierarchy(objectId, DateTime.MinValue, permanently); return 0; });
 
     private T Call<T>(Func<Application2Class, T> call)
     {

@@ -17,56 +17,64 @@ namespace OneNoteMcp;
 /// - <c>h1</c>-<c>h6</c>: OE with a heading QuickStyleDef, and a blank OE before it
 /// - <c>ul</c>, <c>ol</c>, <c>li</c>: OE with <c>one:List</c>, nested lists in OEChildren
 /// - <c>table</c>: <c>one:Table</c>
-/// - <c>pre</c>: one monospace OE per line
+/// - <c>pre</c>: one OE per line, in OneNote's Code style
+/// - <c>blockquote</c>: paragraphs and lists in OneNote's Quote style. Headings, tables, and code inside a quote lose the quote.
 /// </remarks>
 public static partial class HtmlToOneNote
 {
-    // OneNote's built-in heading styles: (font size, color, italic)
-    private static readonly Dictionary<int, (string Size, string Color, bool Italic)> HeadingStyles = new()
+    /// <summary>OneNote's built-in styles: (font, size, color, italic)</summary>
+    private static readonly Dictionary<string, (string Font, string Size, string Color, bool Italic)> Styles = new()
     {
-        [1] = ("16.0", "#1E4E79", false),
-        [2] = ("14.0", "#2E75B5", false),
-        [3] = ("12.0", "#5B9BD5", false),
-        [4] = ("12.0", "#5B9BD5", true),
-        [5] = ("11.0", "#2E75B5", false),
-        [6] = ("11.0", "#2E75B5", true),
+        ["h1"] = ("Calibri", "16.0", "#1E4E79", false),
+        ["h2"] = ("Calibri", "14.0", "#2E75B5", false),
+        ["h3"] = ("Calibri", "12.0", "#5B9BD5", false),
+        ["h4"] = ("Calibri", "12.0", "#5B9BD5", true),
+        ["h5"] = ("Calibri", "11.0", "#2E75B5", false),
+        ["h6"] = ("Calibri", "11.0", "#2E75B5", true),
+        // Not italic like OneNote's own Quote style: OneNote copies style italic onto the text, which hides italic words.
+        ["blockquote"] = ("Calibri", "11.0", "#595959", false),
+        ["code"] = ("Consolas", "10.0", "automatic", false),
     };
 
     private static readonly HashSet<string> Inline =
-        ["b", "strong", "i", "em", "u", "s", "strike", "del", "sup", "sub", "a", "span", "code"];
+        ["b", "strong", "i", "em", "u", "s", "strike", "del", "sup", "sub", "a", "span", "code", "img"];
 
     /// <summary>
-    /// Appends <paramref name="html"/> to a page as an Outline, and adds the heading styles it needs.
+    /// Appends <paramref name="html"/> to a page as an Outline, and adds the styles it needs.
     /// </summary>
-    public static void AddToPage(XElement page, string html)
+    /// <param name="fromMarkdown">The HTML came from Markdown, whose table code keeps <c>\|</c> for a pipe</param>
+    public static void AddToPage(XElement page, string html, bool fromMarkdown = false)
     {
         var body = new HtmlParser().ParseDocument($"<body>{html}</body>").Body!;
-        var builder = new Builder();
+        var defs = page.Elements(One + "QuickStyleDef").ToList();
+
+        // Reuse the page's styles by name. New ones get the next free indexes.
+        var indexes = defs.Where(d => d.Attribute("name") is not null && int.TryParse((string?)d.Attribute("index"), out _))
+            .GroupBy(d => (string)d.Attribute("name")!)
+            .ToDictionary(g => g.Key, g => int.Parse((string)g.First().Attribute("index")!));
+        var builder = new Builder(indexes, defs.Select(d => int.TryParse((string?)d.Attribute("index"), out var i) ? i : 0).DefaultIfEmpty(-1).Max() + 1, fromMarkdown);
+
         var outline = new XElement(One + "Outline");
         var children = new XElement(One + "OEChildren");
         outline.Add(children);
         builder.Blocks(body.ChildNodes, children);
 
-        // QuickStyleDef index = heading level. It must sit with the other QuickStyleDefs.
-        var defs = page.Elements(One + "QuickStyleDef").ToList();
-        var existing = defs.Select(d => (string?)d.Attribute("index")).ToHashSet();
-        var newDefs = builder.Headings.Order()
-            .Where(level => !existing.Contains(level.ToString()))
-            .Select(level =>
+        // QuickStyleDefs must sit together, before the content.
+        var newDefs = builder.NewStyles.Select(style =>
+        {
+            var (font, size, color, italic) = Styles[style.Name];
+            var def = new XElement(One + "QuickStyleDef",
+                new XAttribute("index", style.Index), new XAttribute("name", style.Name),
+                new XAttribute("fontColor", color), new XAttribute("highlightColor", "automatic"),
+                new XAttribute("font", font), new XAttribute("fontSize", size),
+                new XAttribute("spaceBefore", "0.0"), new XAttribute("spaceAfter", "0.0"));
+            if (italic)
             {
-                var (size, color, italic) = HeadingStyles[level];
-                var def = new XElement(One + "QuickStyleDef",
-                    new XAttribute("index", level), new XAttribute("name", $"h{level}"),
-                    new XAttribute("fontColor", color), new XAttribute("highlightColor", "automatic"),
-                    new XAttribute("font", "Calibri"), new XAttribute("fontSize", size),
-                    new XAttribute("spaceBefore", "0.0"), new XAttribute("spaceAfter", "0.0"));
-                if (italic)
-                {
-                    def.Add(new XAttribute("italic", "true"));
-                }
+                def.Add(new XAttribute("italic", "true"));
+            }
 
-                return def;
-            }).ToList();
+            return def;
+        }).ToList();
 
         if (defs.Count > 0)
         {
@@ -85,14 +93,20 @@ public static partial class HtmlToOneNote
     /// <summary>
     /// Renders inline nodes as the HTML OneNote accepts inside <c>one:T</c>.
     /// </summary>
-    private static string InlineHtml(IEnumerable<INode> nodes)
+    /// <param name="inCode">Keep every space, as <c>&amp;nbsp;</c></param>
+    /// <param name="inLink">Inside a link, where an image can only be its alt text</param>
+    /// <param name="inTable">In a table cell, where code keeps the <c>\|</c> that Markdown needs for a pipe</param>
+    private static string InlineHtml(IEnumerable<INode> nodes, bool inCode = false, bool inLink = false, bool inTable = false)
     {
         var sb = new StringBuilder();
         foreach (var n in nodes)
         {
             if (n is IText t)
             {
-                sb.Append(WebUtility.HtmlEncode(Whitespace().Replace(t.Data, " ")));
+                // Inline code is one line: a newline in it would split the OneNote text
+                sb.Append(inCode
+                    ? CodeHtml((inTable ? t.Data.Replace(@"\|", "|") : t.Data).Replace("\r", "").Replace('\n', ' '))
+                    : WebUtility.HtmlEncode(Whitespace().Replace(t.Data, " ")));
                 continue;
             }
 
@@ -101,7 +115,8 @@ public static partial class HtmlToOneNote
                 continue;
             }
 
-            var inner = InlineHtml(e.ChildNodes);
+            var inner = InlineHtml(e.ChildNodes, inCode || e.LocalName == "code", inLink || e.LocalName == "a", inTable);
+            var alt = e.GetAttribute("alt") is { Length: > 0 } a ? a : e.GetAttribute("src") ?? "image";
             sb.Append(e.LocalName switch
             {
                 "b" or "strong" => $"<b>{inner}</b>",
@@ -110,7 +125,11 @@ public static partial class HtmlToOneNote
                 "s" or "strike" or "del" => $"<span style='text-decoration:line-through'>{inner}</span>",
                 "sup" or "sub" => $"<{e.LocalName}>{inner}</{e.LocalName}>",
                 "code" => $"<span style='font-family:Consolas'>{inner}</span>",
-                "a" => $"<a href=\"{WebUtility.HtmlEncode(e.GetAttribute("href") ?? "")}\">{inner}</a>",
+                "a" => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("href")))}\">{inner}</a>",
+
+                // OneNote can't load an image from a URL here: keep it as a link, or its alt text inside a link.
+                "img" when inLink => WebUtility.HtmlEncode(alt),
+                "img" => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("src")))}\">{WebUtility.HtmlEncode(alt)}</a>",
                 _ => inner,
             });
         }
@@ -118,11 +137,58 @@ public static partial class HtmlToOneNote
         return sb.ToString();
     }
 
-    private sealed class Builder
-    {
-        public HashSet<int> Headings { get; } = [];
+    /// <summary>
+    /// Code text as OneNote HTML: every space and tab kept as an entity, so trimming can't drop indentation.
+    /// </summary>
+    private static string CodeHtml(string text) => WebUtility.HtmlEncode(text).Replace(" ", "&nbsp;").Replace("\t", "&#9;");
 
-        private static XElement Oe(XElement parent, string innerHtml, int? style = null, string? listKind = null)
+    /// <summary>
+    /// The link target, with backslashes back.
+    /// </summary>
+    /// <remarks>
+    /// - Markdig writes a backslash in a URL as <c>%5C</c>, which breaks <c>\\server\share</c> links in OneNote.
+    /// - Only file-share and file: links: elsewhere %5C is part of the URL.
+    /// </remarks>
+    private static string Href(string? href)
+    {
+        href ??= "";
+        return href.StartsWith("%5C%5C", StringComparison.OrdinalIgnoreCase) || href.StartsWith(@"\\") || href.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+            ? href.Replace("%5C", "\\", StringComparison.OrdinalIgnoreCase)
+            : href;
+    }
+
+    /// <param name="indexes">The page's QuickStyleDef indexes by name</param>
+    /// <param name="nextIndex">The first free QuickStyleDef index</param>
+    /// <param name="fromMarkdown">Turn <c>\|</c> in table code back into a pipe</param>
+    private sealed class Builder(Dictionary<string, int> indexes, int nextIndex, bool fromMarkdown)
+    {
+        private bool _inQuote;
+        private bool _inTable;
+
+        /// <summary>Per parent OEChildren: whether its next numbered list uses <c>##)</c>.</summary>
+        /// <remarks>
+        /// - OneNote continues numbering across sibling lists with the same format, even with paragraphs between them. Alternating formats restarts each list at 1.
+        /// - Lists under different parents restart on their own.
+        /// </remarks>
+        private readonly Dictionary<XElement, bool> _altNumberFormat = [];
+
+        /// <summary>Styles this content needs that the page doesn't have yet</summary>
+        public List<(string Name, int Index)> NewStyles { get; } = [];
+
+        private int StyleIndex(string name)
+        {
+            if (!indexes.TryGetValue(name, out var index))
+            {
+                index = indexes[name] = nextIndex++;
+                NewStyles.Add((name, index));
+            }
+
+            return index;
+        }
+
+        /// <param name="number">For a numbered item, its number and format (<c>##.</c> or <c>##)</c>)</param>
+        /// <remarks>numberSequence picks the number style (0 is 1, 2, 3; 1 is I, II, III), so it's always 0.</remarks>
+        private static XElement Oe(XElement parent, string innerHtml, int? style = null, string? listKind = null, (int Value, string Format) number = default)
         {
             var oe = new XElement(One + "OE");
             if (style is not null)
@@ -133,7 +199,7 @@ public static partial class HtmlToOneNote
             if (listKind is not null)
             {
                 oe.Add(new XElement(One + "List", listKind == "ol"
-                    ? new XElement(One + "Number", new XAttribute("numberSequence", "0"), new XAttribute("numberFormat", "##."))
+                    ? new XElement(One + "Number", new XAttribute("numberSequence", "0"), new XAttribute("numberFormat", number.Format ?? "##."), new XAttribute("text", $"{number.Value}{(number.Format ?? "##.")[^1]}"))
                     : new XElement(One + "Bullet", new XAttribute("bullet", "2"))));
             }
 
@@ -151,10 +217,10 @@ public static partial class HtmlToOneNote
 
             void Flush()
             {
-                var text = InlineHtml(run).Trim();
+                var text = InlineHtml(run, inTable: _inTable && fromMarkdown).Trim();
                 if (text.Length > 0)
                 {
-                    Oe(parent, text);
+                    Oe(parent, text, style: _inQuote ? StyleIndex("blockquote") : null);
                 }
 
                 run.Clear();
@@ -179,33 +245,65 @@ public static partial class HtmlToOneNote
                     case "br":
                         break;
                     case "h1" or "h2" or "h3" or "h4" or "h5" or "h6":
-                        var level = e.LocalName[1] - '0';
-                        Headings.Add(level);
                         if (parent.HasElements)
                         {
                             Oe(parent, ""); // blank line before a heading, like hand-made pages
                         }
 
-                        Oe(parent, InlineHtml(e.ChildNodes), style: level);
+                        Oe(parent, InlineHtml(e.ChildNodes), style: StyleIndex(e.LocalName));
+                        break;
+                    case "blockquote":
+                        if (!_inQuote && parent.Elements(One + "OE").LastOrDefault() is { } previous && indexes.TryGetValue("blockquote", out var quoteIndex)
+                            && (string?)previous.Attribute("quickStyleIndex") == quoteIndex.ToString())
+                        {
+                            Oe(parent, ""); // keeps back-to-back quotes apart
+                        }
+
+                        var outerQuote = _inQuote;
+                        _inQuote = true;
+                        Blocks(e.ChildNodes, parent);
+                        _inQuote = outerQuote;
                         break;
                     case "ul" or "ol":
+                        // Keeps back-to-back lists of the same kind apart. Bullets then numbers, or a list then a quoted list, already read as two lists.
+                        var kind = e.LocalName == "ol" ? "Number" : "Bullet";
+                        var previousOe = parent.Elements(One + "OE").LastOrDefault();
+                        var previousQuoted = previousOe is not null && indexes.TryGetValue("blockquote", out var q) && (string?)previousOe.Attribute("quickStyleIndex") == q.ToString();
+                        if (previousOe?.Element(One + "List")?.Element(One + kind) is not null && previousQuoted == _inQuote)
+                        {
+                            Oe(parent, "", style: _inQuote ? StyleIndex("blockquote") : null);
+                        }
+
                         ListItems(e, parent);
                         break;
                     case "table":
+                        // Tables can't hold the quote style
+                        var tableInQuote = _inQuote;
+                        var outerTable = _inTable;
+                        (_inQuote, _inTable) = (false, true);
                         Table(e, parent);
+                        (_inQuote, _inTable) = (tableInQuote, outerTable);
                         break;
                     case "pre":
-                        foreach (var line in e.TextContent.Trim('\n').Split('\n'))
+                        var code = StyleIndex("code");
+                        if (parent.Elements(One + "OE").LastOrDefault() is { } last && (string?)last.Attribute("quickStyleIndex") == code.ToString())
                         {
-                            var escaped = WebUtility.HtmlEncode(line.TrimEnd('\r')).Replace(" ", "&nbsp;");
-                            Oe(parent, $"<span style='font-family:Consolas'>{(escaped.Length > 0 ? escaped : "&nbsp;")}</span>");
+                            Oe(parent, ""); // keeps back-to-back code blocks apart
+                        }
+
+                        // Only the final newline ends the code. Leading and inner blank lines are code.
+                        var codeText = e.TextContent.EndsWith('\n') ? e.TextContent[..^1] : e.TextContent;
+                        foreach (var line in codeText.Split('\n'))
+                        {
+                            var escaped = CodeHtml(line.TrimEnd('\r'));
+                            Oe(parent, escaped.Length > 0 ? escaped : "&nbsp;", style: code);
                         }
 
                         break;
                     case "hr":
                         Oe(parent, new string('―', 20));
                         break;
-                    default: // p, div, blockquote, section, etc.
+                    default: // p, div, section, etc.
                         Blocks(e.ChildNodes, parent);
                         break;
                 }
@@ -216,10 +314,28 @@ public static partial class HtmlToOneNote
 
         private void ListItems(IElement list, XElement parent)
         {
+            var number = int.TryParse(list.GetAttribute("start"), out var start) ? start : 1;
+            var format = "##.";
+            if (list.LocalName == "ol")
+            {
+                var alt = _altNumberFormat.GetValueOrDefault(parent);
+                _altNumberFormat[parent] = !alt;
+                format = alt ? "##)" : "##.";
+            }
+
             foreach (var li in list.Children.Where(c => c.LocalName == "li"))
             {
-                var oe = Oe(parent, InlineHtml(li.ChildNodes.Where(IsInline)), listKind: list.LocalName);
+                var inline = li.ChildNodes.Where(IsInline).ToList();
                 var nested = li.ChildNodes.Where(c => !IsInline(c)).ToList();
+
+                // Loose lists wrap the item text in <p>: use the first paragraph as the item text.
+                if (string.IsNullOrWhiteSpace(InlineHtml(inline)) && nested.FirstOrDefault() is IElement { LocalName: "p" } p)
+                {
+                    inline = [.. p.ChildNodes];
+                    nested.RemoveAt(0);
+                }
+
+                var oe = Oe(parent, InlineHtml(inline), style: _inQuote ? StyleIndex("blockquote") : null, listKind: list.LocalName, number: (number++, format));
                 if (nested.Count > 0)
                 {
                     var children = new XElement(One + "OEChildren");
@@ -257,7 +373,7 @@ public static partial class HtmlToOneNote
                     {
                         if (row[i].LocalName == "th")
                         {
-                            Oe(cellChildren, $"<b>{InlineHtml(row[i].ChildNodes).Trim()}</b>");
+                            Oe(cellChildren, $"<b>{InlineHtml(row[i].ChildNodes, inTable: fromMarkdown).Trim()}</b>");
                         }
                         else
                         {
