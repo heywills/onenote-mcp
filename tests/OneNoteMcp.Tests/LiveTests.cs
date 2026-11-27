@@ -19,7 +19,7 @@ public sealed class LiveFactAttribute : FactAttribute
 }
 
 /// <summary>
-/// Tests against OneNote desktop. They create pages in a test section and delete them permanently.
+/// Tests against OneNote desktop. They create pages in a test section and delete them.
 /// </summary>
 /// <remarks>
 /// - <c>ONENOTE_LIVE_SECTION</c>: <c>Notebook name/Section name</c> for test pages
