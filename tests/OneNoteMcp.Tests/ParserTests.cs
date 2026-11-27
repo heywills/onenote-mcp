@@ -100,13 +100,11 @@ public class ParserTests
     }
 
     [Fact]
-    public void ConvertsPageTextAndStripsInlineHtml()
+    public void ConvertsPageTextAndSkipsRepeatedTitle()
     {
-        var (md, _) = PageMarkdown.Convert(PageXml);
+        var (md, _) = PageMarkdown.Convert(PageXml.Replace("This is paragraph one.", "Test Page]]></one:T></one:OE><one:OE><one:T><![CDATA[This is paragraph one."));
 
-        Assert.StartsWith("# Test Page", md);
-        Assert.Contains("This is paragraph one.", md);
-        Assert.Contains("This is paragraph two with bold text & more.", md);
+        Assert.StartsWith("# Test Page\n\nThis is paragraph one.\n\nThis is paragraph two with **bold** text & more.", md);
         Assert.Contains("Text after image.", md);
     }
 

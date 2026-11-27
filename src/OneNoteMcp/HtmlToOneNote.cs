@@ -218,8 +218,17 @@ public static partial class HtmlToOneNote
         {
             foreach (var li in list.Children.Where(c => c.LocalName == "li"))
             {
-                var oe = Oe(parent, InlineHtml(li.ChildNodes.Where(IsInline)), listKind: list.LocalName);
+                var inline = li.ChildNodes.Where(IsInline).ToList();
                 var nested = li.ChildNodes.Where(c => !IsInline(c)).ToList();
+
+                // Loose lists wrap the item text in <p>: use the first paragraph as the item text.
+                if (string.IsNullOrWhiteSpace(InlineHtml(inline)) && nested.FirstOrDefault() is IElement { LocalName: "p" } p)
+                {
+                    inline = [.. p.ChildNodes];
+                    nested.RemoveAt(0);
+                }
+
+                var oe = Oe(parent, InlineHtml(inline), listKind: list.LocalName);
                 if (nested.Count > 0)
                 {
                     var children = new XElement(One + "OEChildren");

@@ -12,7 +12,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_list_sections` | Sections in a notebook, including section groups |
 | `onenote_list_pages` | Pages in a section |
 | `onenote_get_notebook_tree` | Notebooks, groups, sections, and page titles |
-| `onenote_get_page` | Page as Markdown, with image callback IDs |
+| `onenote_get_page` | Page as Markdown: headings, nested lists, tables, code blocks, inline formatting, and image callback IDs |
 | `onenote_get_page_by_link` | Page from a "Copy link to page" link (`onenote:` or web link) |
 | `onenote_get_page_raw` | Page as OneNote XML |
 | `onenote_get_page_images` | Images on a page |
@@ -20,6 +20,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_search` | Search all notebooks |
 | `onenote_search_in_notebook` | Search one notebook |
 | `onenote_create_page` | New page from HTML: headings, nested lists, tables, code |
+| `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown. |
 
 ## Requirements
 
@@ -42,7 +43,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 
 - Search uses Windows Search, so it finds indexed pages only.
 - Images OneNote hasn't downloaded yet return an error. Open the page in OneNote desktop, then retry.
-- `onenote_get_page` drops heading levels and bullet markers.
+- Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
 
 ## How it works
 
