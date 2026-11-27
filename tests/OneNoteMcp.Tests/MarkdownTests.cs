@@ -320,7 +320,27 @@ public class MarkdownTests
             </one:Page>
             """;
 
-        Assert.Equal("# P\n\n> - item\n>\n>   [Image 1]\n\n| H |\n| --- |\n| `a*b` |\n\n`run cmd` and **Note:** next", PageMarkdown.Convert(xml).Markdown);
+        Assert.Equal("# P\n\n> - item\n>\n>   [Image 1]\n\n| H |\n| --- |\n| `a*b` |\n\n`run` [`cmd`](https://x) and **Note:** next", PageMarkdown.Convert(xml).Markdown);
+    }
+
+    [Fact]
+    public void UsesHtmlForEmphasisRightAfterAnotherRunsMarker() =>
+        Assert.Equal("# P\n\n*foo*<strong>.bar</strong>", Read("<one:OE><one:T><![CDATA[<span style='font-style:italic'>foo</span><span style='font-weight:bold'>.bar</span>]]></one:T></one:OE>"));
+
+    [Fact]
+    public void KeepsLinksInMonospaceText()
+    {
+        Assert.Equal("# P\n\n`see` [`doc`](http://x.com/)", Read("<one:OE><one:T><![CDATA[<span style='font-family:Consolas'>see <a href=\"http://x.com/\">doc</a></span>]]></one:T></one:OE>"));
+        Assert.Equal("# P\n\n[`a*b_`](http://x.com/)", Read("<one:OE><one:T><![CDATA[<a href=\"http://x.com/\" style='font-family:Consolas'>a*b_</a>]]></one:T></one:OE>"));
+    }
+
+    [Fact]
+    public void InlineCodeWithANewlineStaysOneLine()
+    {
+        var page = new XElement(XName.Get("Page", Ns));
+        HtmlToOneNote.AddToPage(page, "<p><code>a\nb</code></p>");
+
+        Assert.Equal("<span style='font-family:Consolas'>a&nbsp;b</span>", page.Descendants(XName.Get("T", Ns)).Single().Value);
     }
 
     [Fact]

@@ -174,9 +174,10 @@ public class LiveTests
             Assert.StartsWith($"page_id: `{pageId}`", _tools.GetPageByLink(_client.GetHyperlink(pageId))));
 
     // OneNote stores a page link in its own relative form; the reader turns it back into one get_page_by_link opens.
+    // The title has & # % : "Copy link to page" drops & and #, and the link still opens.
     [LiveFact]
     public void FollowsAPageLinkReadFromAPage() =>
-        WithPage("# Live link target (deleting now)\n\nTarget", targetId =>
+        WithPage("# Live link target Q&A #1 50% (deleting now)\n\nTarget", targetId =>
             WithPage($"# Live link source (deleting now)\n\n[Target](<{_client.GetHyperlink(targetId)}>)", sourceId =>
             {
                 var line = _tools.GetPage(sourceId).Split('\n').Single(l => l.StartsWith("[Target]("));

@@ -103,8 +103,9 @@ public static partial class HtmlToOneNote
         {
             if (n is IText t)
             {
+                // Inline code is one line: a newline in it would split the OneNote text
                 sb.Append(inCode
-                    ? CodeHtml(inTable ? t.Data.Replace(@"\|", "|") : t.Data)
+                    ? CodeHtml((inTable ? t.Data.Replace(@"\|", "|") : t.Data).Replace("\r", "").Replace('\n', ' '))
                     : WebUtility.HtmlEncode(Whitespace().Replace(t.Data, " ")));
                 continue;
             }

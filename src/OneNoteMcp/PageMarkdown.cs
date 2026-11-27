@@ -445,7 +445,7 @@ public static partial class PageMarkdown
         var text = Inline(body.ChildNodes, paragraph.Code, (ignore.Bold || paragraph.Bold, ignore.Italic || paragraph.Italic, paragraph.Strike));
         if (paragraph.Code)
         {
-            return CodeSpan(text);
+            return HasLink(body) ? CodeWithLinks(body.ChildNodes) : CodeSpan(text);
         }
 
         text = Wrap(text, paragraph.Strike ? "~~" : "");
@@ -499,6 +499,9 @@ public static partial class PageMarkdown
             var code = inCode || style.Code || tag == "code";
             var before = sb.Length > 0 ? sb[^1] : outerBefore;
 
+            // Markers right after another run's closing marker merge with it ("*foo***.bar**"), so use HTML there
+            var afterMarker = sb.Length > 0 && sb[^1] is '*' or '~' && (sb.Length < 2 || sb[^2] != '\\');
+
             // The next character, past any empty elements
             var after = NextChar(list.Skip(i + 1), outerAfter);
 
@@ -526,14 +529,17 @@ public static partial class PageMarkdown
             }
             else if (tag == "a")
             {
-                sb.Append($"[{inner.Trim()}]({LinkDestination(e.GetAttribute("href") ?? "")})");
+                // A monospace link: [`text`](url)
+                var text = code ? CodeSpan(inner.Trim()) : inner.Trim();
+                sb.Append($"[{text}]({LinkDestination(e.GetAttribute("href") ?? "")})");
             }
             else if (code && !inCode)
             {
                 // Merged code runs keep formatting they all share: **`x`**
                 var formats = run.Select(Formatting).ToList();
-                sb.Append(Emphasize(CodeSpan(inner), formats.All(f => f.Strike) && !ignore.Strike,
-                    formats.All(f => f.Italic) && !ignore.Italic, formats.All(f => f.Bold) && !ignore.Bold, before, after));
+                var codeMarkdown = run.Any(HasLink) ? CodeWithLinks(run.SelectMany(r => r.ChildNodes)) : CodeSpan(inner);
+                sb.Append(Emphasize(codeMarkdown, formats.All(f => f.Strike) && !ignore.Strike,
+                    formats.All(f => f.Italic) && !ignore.Italic, formats.All(f => f.Bold) && !ignore.Bold, before, after, afterMarker));
             }
             else if (code)
             {
@@ -541,20 +547,64 @@ public static partial class PageMarkdown
             }
             else
             {
-                sb.Append(Emphasize(inner, strike, italic, bold, before, after));
+                sb.Append(Emphasize(inner, strike, italic, bold, before, after, afterMarker));
             }
         }
 
         return sb.ToString();
     }
 
+    private static bool HasLink(IElement e) => e.QuerySelector("a[href]") is not null;
+
+    /// <summary>
+    /// Monospace text holding links, as code spans around <c>[`text`](url)</c> links: a code span can't hold a link.
+    /// </summary>
+    private static string CodeWithLinks(IEnumerable<INode> nodes)
+    {
+        var sb = new StringBuilder();
+        var code = new StringBuilder();
+
+        void Flush()
+        {
+            sb.Append(CodeSpan(code.ToString()));
+            code.Clear();
+        }
+
+        void Walk(IEnumerable<INode> children)
+        {
+            foreach (var node in children)
+            {
+                if (node is IElement { LocalName: "a" } a && !string.IsNullOrEmpty(a.GetAttribute("href")))
+                {
+                    Flush();
+                    sb.Append($"[{CodeSpan(a.TextContent.Replace(' ', ' ').Trim())}]({LinkDestination(a.GetAttribute("href")!)})");
+                }
+                else if (node is IElement element && HasLink(element))
+                {
+                    Walk(element.ChildNodes);
+                }
+                else
+                {
+                    code.Append(node is IElement { LocalName: "br" } ? " " : node.TextContent.Replace(' ', ' '));
+                }
+            }
+        }
+
+        Walk(nodes);
+        Flush();
+        return sb.ToString();
+    }
+
     /// <summary>
     /// Wraps text in strikethrough, italic, and bold.
     /// </summary>
-    /// <remarks>"func**(x)**" shows the asterisks: Markdown emphasis can't open between a letter and punctuation, so those cases use HTML.</remarks>
-    private static string Emphasize(string text, bool strike, bool italic, bool bold, char before, char after)
+    /// <remarks>
+    /// - "func**(x)**" shows the asterisks: Markdown emphasis can't open between a letter and punctuation, so those cases use HTML.
+    /// - So does text right after another run's closing marker, where the markers would merge.
+    /// </remarks>
+    private static string Emphasize(string text, bool strike, bool italic, bool bold, char before, char after, bool afterMarker = false)
     {
-        if (!MarkersCanWrap(text, before, after))
+        if (afterMarker && (strike || italic || bold) || !MarkersCanWrap(text, before, after))
         {
             text = WrapHtml(text, strike ? "del" : "");
             text = WrapHtml(text, italic ? "em" : "");
