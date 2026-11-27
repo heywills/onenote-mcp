@@ -17,6 +17,13 @@ public class HtmlToOneNoteTests
 
     private static List<string> Texts(XElement e) => e.Descendants(One + "T").Select(t => t.Value).ToList();
 
+    [Theory]
+    [InlineData("<!DOCTYPE html><html><head><title>Notes</title><style>p{color:red}</style></head><body><p>Body</p></body></html>")]
+    [InlineData("<html><head><meta charset=\"utf-8\"><link rel=\"stylesheet\" href=\"s.css\"></head><body><p>Body</p><script>x()</script></body></html>")]
+    [InlineData("<style>p{color:red}</style><p>Body</p><noscript>Enable JS</noscript>")]
+    public void KeepsOnlyTheBodyContent(string html) =>
+        Assert.Equal(["Body"], Texts(Convert(html)));
+
     [Fact]
     public void KeepsInlineFormattingAndSpaces()
     {

@@ -267,9 +267,6 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     // Helpers
 
     /// <summary>Checks the output options before any OneNote call.</summary>
-    /// <remarks>
-    /// - A relative path would resolve against the server's folder, not the agent's.
-    /// </remarks>
     private static void CheckOutput(string outputPath, bool inline)
     {
         var hasPath = !string.IsNullOrWhiteSpace(outputPath);
@@ -292,9 +289,6 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     }
 
     /// <summary>The content, or the text of <paramref name="inputPath"/> when one is given.</summary>
-    /// <remarks>
-    /// - Runs before any OneNote call, so a bad path doesn't leave a blank page behind.
-    /// </remarks>
     private static string Input(string content, string inputPath, string contentName)
     {
         if (string.IsNullOrWhiteSpace(inputPath))

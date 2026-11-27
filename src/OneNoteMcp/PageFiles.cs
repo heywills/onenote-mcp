@@ -15,6 +15,7 @@ public static partial class PageFiles
 {
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
+    /// <summary>Rejects paths the tools can't safely read or write.</summary>
     /// <param name="parameter">The tool parameter that holds the path, for error messages</param>
     /// <remarks>
     /// - A relative path would resolve against the server's folder, not the agent's.
@@ -27,7 +28,17 @@ public static partial class PageFiles
             throw new McpException($"{parameter} must be absolute, such as C:\\work\\page.md, not \"{path}\"");
         }
 
-        if (IsDevicePath(path) || IsDevicePath(Path.GetFullPath(path)))
+        string full;
+        try
+        {
+            full = Path.GetFullPath(path);
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException)
+        {
+            throw new McpException($"{parameter} isn't a valid path: {e.Message}", e);
+        }
+
+        if (IsDevicePath(path) || IsDevicePath(full))
         {
             throw new McpException($"{parameter} must be a file path, not a device path: \"{path}\"");
         }
@@ -58,6 +69,12 @@ public static partial class PageFiles
             throw new McpException($"Can't read \"{path}\": {e.Message}", e);
         }
 
+        // UTF-16 without a byte-order mark reads as valid UTF-8 with a NUL between characters
+        if (text.Contains('\0'))
+        {
+            throw new McpException($"\"{path}\" isn't UTF-8. Save it as UTF-8 and try again.");
+        }
+
         return string.IsNullOrWhiteSpace(text) ? throw new McpException($"\"{path}\" is empty") : text;
     }
 
@@ -80,6 +97,7 @@ public static partial class PageFiles
 
     private static bool IsDevicePath(string path) => path.StartsWith(@"\\.\") || path.StartsWith(@"\\?\");
 
+    /// <summary>Rejects file names Windows changes, can't hold, or reserves for devices.</summary>
     /// <remarks>
     /// - Windows drops a trailing dot or space, so the file would land under another name.
     /// - ':' would write to an NTFS alternate data stream.
@@ -103,6 +121,6 @@ public static partial class PageFiles
         }
     }
 
-    [GeneratedRegex(@"^(CON|PRN|AUX|NUL|COM[0-9\u00B9\u00B2\u00B3]|LPT[0-9\u00B9\u00B2\u00B3])$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(CON|CONIN\$|CONOUT\$|PRN|AUX|NUL|COM[0-9\u00B9\u00B2\u00B3]|LPT[0-9\u00B9\u00B2\u00B3])$", RegexOptions.IgnoreCase)]
     private static partial Regex ReservedName();
 }

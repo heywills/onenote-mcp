@@ -83,6 +83,8 @@ public class OutputTests
     [InlineData(@"\\?\C:\work\page.md", "device path")]
     [InlineData(@"C:\work\NUL", "device path")]
     [InlineData(@"C:\work\COM1.md", "reserves")]
+    [InlineData(@"C:\work\CONIN$", "reserves")]
+    [InlineData("C:\\work\\a\0b.md", "valid path")]
     public void ChecksTheInputPath(string path, string error) =>
         Assert.Contains(error, Assert.Throws<McpException>(() => _tools.CreatePageFromMarkdown("{section}", inputPath: path)).Message);
 
@@ -107,6 +109,10 @@ public class OutputTests
     [Fact]
     public void RejectsFilesThatArentUtf8() =>
         WithFile(Encoding.Latin1, "# Café", path => Assert.Contains("isn't UTF-8", Assert.Throws<McpException>(() => PageFiles.Read(path)).Message));
+
+    [Fact]
+    public void RejectsUtf16WithoutAByteOrderMark() =>
+        WithFile(Encoding.Unicode, "# Notes", path => Assert.Contains("isn't UTF-8", Assert.Throws<McpException>(() => PageFiles.Read(path)).Message));
 
     [Fact]
     public void RejectsEmptyFiles() =>

@@ -45,7 +45,8 @@ public static partial class HtmlToOneNote
     /// <param name="fromMarkdown">The HTML came from Markdown, whose table code keeps <c>\|</c> for a pipe</param>
     public static void AddToPage(XElement page, string html, bool fromMarkdown = false)
     {
-        var body = new HtmlParser().ParseDocument($"<body>{html}</body>").Body!;
+        // A whole document, such as a saved web page, contributes only its body
+        var body = new HtmlParser().ParseDocument(DocumentTag().IsMatch(html) ? html : $"<body>{html}</body>").Body!;
         var defs = page.Elements(One + "QuickStyleDef").ToList();
 
         // Reuse the page's styles by name. New ones get the next free indexes.
@@ -250,7 +251,8 @@ public static partial class HtmlToOneNote
         {
             switch (e.LocalName)
             {
-                case "br":
+                // Not content: a page body never shows these
+                case "br" or "script" or "style" or "title" or "template" or "meta" or "link" or "noscript":
                     break;
                 case "h1" or "h2" or "h3" or "h4" or "h5" or "h6":
                     if (parent.HasElements)
@@ -418,4 +420,7 @@ public static partial class HtmlToOneNote
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex Whitespace();
+
+    [GeneratedRegex(@"<(!doctype|html|head|body)[\s>]", RegexOptions.IgnoreCase)]
+    private static partial Regex DocumentTag();
 }
