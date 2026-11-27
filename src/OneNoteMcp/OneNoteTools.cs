@@ -212,8 +212,9 @@ public sealed partial class OneNoteTools(OneNoteClient oneNote)
             Optional HTML for the page body.
             Block: <p>, <div>, <br>, <h1>-<h6>, <ul>/<ol>/<li> (nested OK), <table>/<tr>/<th>/<td>, <pre>, <blockquote>, <hr>.
             Inline: <b>, <i>, <u>, <s>, <sup>, <sub>, <code>, <a href>, <img> (becomes a link).
-            """)] string contentHtml = "") =>
-        CreatePageFromHtml(sectionId, title, contentHtml);
+            """)] string contentHtml = "",
+        [Description("Absolute path of an HTML file for the page body, instead of contentHtml")] string inputPath = "") =>
+        CreatePageFromHtml(sectionId, title, Input(contentHtml, inputPath, nameof(contentHtml)));
 
     [McpServerTool(Name = "onenote_create_page_from_markdown", Destructive = false)]
     [Description("""
@@ -223,9 +224,16 @@ public sealed partial class OneNoteTools(OneNoteClient oneNote)
         """)]
     public string CreatePageFromMarkdown(
         [Description("The section ID")] string sectionId,
-        [Description("Page content as Markdown")] string markdown,
-        [Description("Page title. Empty to use the Markdown's leading \"# \" heading, which is then left out of the body.")] string title = "")
+        [Description("Page content as Markdown. Required unless inputPath is given.")] string markdown = "",
+        [Description("Page title. Empty to use the Markdown's leading \"# \" heading, which is then left out of the body.")] string title = "",
+        [Description("Absolute path of a Markdown file, such as one onenote_get_page saved, instead of markdown")] string inputPath = "")
     {
+        markdown = Input(markdown, inputPath, nameof(markdown));
+        if (string.IsNullOrWhiteSpace(markdown))
+        {
+            throw new McpException("Pass markdown or inputPath");
+        }
+
         if (string.IsNullOrWhiteSpace(title))
         {
             (var heading, markdown) = MarkdownToOneNote.SplitTitle(markdown);
@@ -298,6 +306,37 @@ public sealed partial class OneNoteTools(OneNoteClient oneNote)
         }
 
         CheckFileName(name);
+    }
+
+    /// <summary>The content, or the text of <paramref name="inputPath"/> when one is given.</summary>
+    /// <remarks>
+    /// - Runs before any OneNote call, so a bad path doesn't leave a blank page behind.
+    /// </remarks>
+    private static string Input(string content, string inputPath, string contentName)
+    {
+        if (string.IsNullOrWhiteSpace(inputPath))
+        {
+            return content;
+        }
+
+        if (!string.IsNullOrEmpty(content))
+        {
+            throw new McpException($"Pass {contentName} or inputPath, not both");
+        }
+
+        if (!Path.IsPathFullyQualified(inputPath) || IsDevicePath(inputPath))
+        {
+            throw new McpException($"inputPath must be an absolute file path, such as C:\\work\\page.md, not \"{inputPath}\"");
+        }
+
+        try
+        {
+            return File.ReadAllText(inputPath);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new McpException($"Can't read \"{inputPath}\": {e.Message}", e);
+        }
     }
 
     private static bool IsDevicePath(string path) => path.StartsWith(@"\\.\") || path.StartsWith(@"\\?\");

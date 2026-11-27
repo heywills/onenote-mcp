@@ -66,6 +66,30 @@ public class OutputTests
         Assert.Contains("reserves", Assert.Throws<McpException>(() => _tools.GetPage("{page}", path)).Message);
 
     [Fact]
+    public void RejectsContentAndInputPathTogether()
+    {
+        Assert.Contains("not both", Assert.Throws<McpException>(() => _tools.CreatePageFromMarkdown("{section}", "# T", inputPath: @"C:\work\page.md")).Message);
+        Assert.Contains("not both", Assert.Throws<McpException>(() => _tools.CreatePage("{section}", "T", "<p>x</p>", @"C:\work\page.html")).Message);
+    }
+
+    [Fact]
+    public void NeedsMarkdownOrInputPath() =>
+        Assert.Contains("Pass markdown or inputPath", Assert.Throws<McpException>(() => _tools.CreatePageFromMarkdown("{section}")).Message);
+
+    [Theory]
+    [InlineData(@"notes\page.md")]
+    [InlineData(@"\\.\pipe\name")]
+    public void NeedsAnAbsoluteInputPath(string path) =>
+        Assert.Contains("absolute file path", Assert.Throws<McpException>(() => _tools.CreatePageFromMarkdown("{section}", inputPath: path)).Message);
+
+    [Fact]
+    public void ReportsAMissingInputFile()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.md");
+        Assert.Contains("Can't read", Assert.Throws<McpException>(() => _tools.CreatePageFromMarkdown("{section}", inputPath: path)).Message);
+    }
+
+    [Fact]
     public void RejectsPathAndInlineTogether() =>
         Assert.Contains("not both", Assert.Throws<McpException>(() => _tools.GetPage("{page}", @"C:\work\page.md", inline: true)).Message);
 }
