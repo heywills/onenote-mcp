@@ -112,7 +112,7 @@ public class OutputTests
 
     [Fact]
     public void RejectsUtf16WithoutAByteOrderMark() =>
-        WithFile(Encoding.Unicode, "# Notes", path => Assert.Contains("isn't UTF-8", Assert.Throws<McpException>(() => PageFiles.Read(path)).Message));
+        WithFile(Encoding.Unicode, "# Notes", path => Assert.Contains("null character", Assert.Throws<McpException>(() => PageFiles.Read(path)).Message));
 
     [Fact]
     public void RejectsEmptyFiles() =>

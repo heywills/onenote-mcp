@@ -72,7 +72,7 @@ public static partial class PageFiles
         // UTF-16 without a byte-order mark reads as valid UTF-8 with a NUL between characters
         if (text.Contains('\0'))
         {
-            throw new McpException($"\"{path}\" isn't UTF-8. Save it as UTF-8 and try again.");
+            throw new McpException($"\"{path}\" has a null character. It may be UTF-16 without a byte-order mark: save it as UTF-8.");
         }
 
         return string.IsNullOrWhiteSpace(text) ? throw new McpException($"\"{path}\" is empty") : text;

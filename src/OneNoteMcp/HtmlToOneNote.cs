@@ -39,14 +39,18 @@ public static partial class HtmlToOneNote
     private static readonly HashSet<string> Inline =
         ["b", "strong", "i", "em", "u", "s", "strike", "del", "sup", "sub", "a", "span", "code", "img"];
 
+    /// <summary>Elements whose text a page never shows, such as those from a saved web page's head</summary>
+    private static readonly HashSet<string> NonContent =
+        ["script", "style", "title", "template", "meta", "link", "noscript", "noframes", "iframe"];
+
     /// <summary>
     /// Appends <paramref name="html"/> to a page as an Outline, and adds the styles it needs.
     /// </summary>
     /// <param name="fromMarkdown">The HTML came from Markdown, whose table code keeps <c>\|</c> for a pipe</param>
     public static void AddToPage(XElement page, string html, bool fromMarkdown = false)
     {
-        // A whole document, such as a saved web page, contributes only its body
-        var body = new HtmlParser().ParseDocument(DocumentTag().IsMatch(html) ? html : $"<body>{html}</body>").Body!;
+        // Parsed as body content even for a whole document: the parser ignores stray html, head, and body tags
+        var body = new HtmlParser().ParseDocument($"<body>{html}</body>").Body!;
         var defs = page.Elements(One + "QuickStyleDef").ToList();
 
         // Reuse the page's styles by name. New ones get the next free indexes.
@@ -111,7 +115,7 @@ public static partial class HtmlToOneNote
                 continue;
             }
 
-            if (n is not IElement e)
+            if (n is not IElement e || NonContent.Contains(e.LocalName))
             {
                 continue;
             }
@@ -235,7 +239,8 @@ public static partial class HtmlToOneNote
                     continue;
                 }
 
-                if (n is not IElement e)
+                // Skipped without a flush, so a script mid-paragraph doesn't split it
+                if (n is not IElement e || NonContent.Contains(e.LocalName))
                 {
                     continue;
                 }
@@ -251,8 +256,7 @@ public static partial class HtmlToOneNote
         {
             switch (e.LocalName)
             {
-                // Not content: a page body never shows these
-                case "br" or "script" or "style" or "title" or "template" or "meta" or "link" or "noscript":
+                case "br":
                     break;
                 case "h1" or "h2" or "h3" or "h4" or "h5" or "h6":
                     if (parent.HasElements)
@@ -420,7 +424,4 @@ public static partial class HtmlToOneNote
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex Whitespace();
-
-    [GeneratedRegex(@"<(!doctype|html|head|body)[\s>]", RegexOptions.IgnoreCase)]
-    private static partial Regex DocumentTag();
 }

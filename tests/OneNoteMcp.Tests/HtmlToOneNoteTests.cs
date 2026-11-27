@@ -21,8 +21,17 @@ public class HtmlToOneNoteTests
     [InlineData("<!DOCTYPE html><html><head><title>Notes</title><style>p{color:red}</style></head><body><p>Body</p></body></html>")]
     [InlineData("<html><head><meta charset=\"utf-8\"><link rel=\"stylesheet\" href=\"s.css\"></head><body><p>Body</p><script>x()</script></body></html>")]
     [InlineData("<style>p{color:red}</style><p>Body</p><noscript>Enable JS</noscript>")]
+    [InlineData("<html><head><noscript><img src=\"https://x.test/pixel.gif\"></noscript></head><body><p>Body</p></body></html>")]
+    [InlineData("<p>Body</p><noframes><p>Old browsers</p></noframes><iframe src=\"https://x.test\">Fallback</iframe>")]
     public void KeepsOnlyTheBodyContent(string html) =>
         Assert.Equal(["Body"], Texts(Convert(html)));
+
+    [Fact]
+    public void SkipsNonContentInsideInlineText()
+    {
+        var page = Convert("<h1>Hi<script>track()</script></h1><p><a href=\"https://x.test\"><svg><title>Twitter</title></svg>Share</a></p>");
+        Assert.Equal(["Hi", "<a href=\"https://x.test\">Share</a>"], Texts(page));
+    }
 
     [Fact]
     public void KeepsInlineFormattingAndSpaces()
