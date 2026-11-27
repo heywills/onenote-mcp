@@ -37,7 +37,7 @@ public sealed class OneNoteClient
         }
 
         // An image that hasn't synced can come back empty
-        return data.Length > 0 ? data : throw new McpException("OneNote returned no image data. Open the page in OneNote desktop, then retry.");
+        return data.Length > 0 ? data : throw new McpException("OneNote returned no image data. It may not be downloaded yet.");
     }
 
     public string FindPages(string query, string startNodeId = "") =>

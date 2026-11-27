@@ -75,13 +75,13 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         [Description(OutputPathDescription)] string outputPath = "",
         [Description(InlineDescription)] bool inline = false)
     {
-        CheckOutput(outputPath, inline);
+        CheckPageOutput(outputPath, inline);
         return inline ? PageText(pageId) : SavePage(pageId, outputPath);
     }
 
     /// <summary>Saves the page as Markdown, with its images in a folder next to it: <c>page.md</c> gets <c>page_images</c>.</summary>
     /// <remarks>
-    /// - An image that can't be saved stays as text, such as <c>[Image N: not downloaded]</c>, so one image doesn't fail the save.
+    /// - An image that can't be saved stays as text with the reason, such as <c>[Image N: OneNote hasn't downloaded this image yet…]</c>, so one image doesn't fail the save.
     /// - Images are saved full size. Saving again overwrites them.
     /// </remarks>
     private string SavePage(string pageId, string outputPath)
@@ -111,9 +111,9 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         {
             data = oneNote.GetBinaryPageContent(pageId, img.CallbackId);
         }
-        catch (McpException)
+        catch (McpException e)
         {
-            return ($"[Image {img.Index}: not downloaded]", false);
+            return ($"[Image {img.Index}: {e.Message.Replace(']', ')')}]", false);
         }
 
         var extension = Images.Extension(data);
@@ -156,7 +156,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         [Description(OutputPathDescription)] string outputPath = "",
         [Description(InlineDescription)] bool inline = false)
     {
-        CheckOutput(outputPath, inline);
+        CheckPageOutput(outputPath, inline);
         var pageId = FindPageByLink(link);
         return inline ? $"page_id: `{pageId}`\n\n{PageText(pageId)}" : SavePage(pageId, outputPath);
     }
@@ -341,9 +341,13 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         }
 
         PageFiles.Check(outputPath, nameof(outputPath));
+    }
 
-        // The image folder takes its name from this
-        if (Path.GetFileNameWithoutExtension(outputPath).Length == 0)
+    /// <summary>Checks the output options of a Markdown tool, whose image folder takes its name from the file.</summary>
+    private static void CheckPageOutput(string outputPath, bool inline)
+    {
+        CheckOutput(outputPath, inline);
+        if (!inline && Path.GetFileNameWithoutExtension(outputPath).Length == 0)
         {
             throw new McpException($"outputPath needs a name before the extension, such as page.md, not \"{Path.GetFileName(outputPath)}\"");
         }
