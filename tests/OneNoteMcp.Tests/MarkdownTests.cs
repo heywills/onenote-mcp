@@ -235,6 +235,47 @@ public class MarkdownTests
         Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
 
     [Fact]
+    public void MergesRunsThatDifferOnlyInColor() =>
+        Assert.Equal("# P\n\n**foobar** and *xy*", Read(
+            "<one:OE><one:T style=\"font-weight:bold\"><![CDATA[foo]]></one:T><one:T style=\"font-weight:bold;color:red\"><![CDATA[bar]]></one:T>"
+            + "<one:T><![CDATA[ and <i>x</i><span style='font-style:italic;font-family:Calibri'>y</span>]]></one:T></one:OE>"));
+
+    [Fact]
+    public void SeesTheCharacterBeforeAWrapperSpan() =>
+        Assert.Equal("# P\n\nfunc<strong>(x)</strong>", Read(
+            "<one:OE><one:T><![CDATA[func<span style='color:red'><span style='font-weight:bold'>(x)</span></span>]]></one:T></one:OE>"));
+
+    [Theory]
+    [InlineData("- item\n\n  ```\n  a\n  ```\n\n```\nb\n```")]
+    [InlineData("- x\n  - a\n\n  * b")]
+    [InlineData("> - a\n>\n> * b")]
+    [InlineData("- x\n\n> - quoted")]
+    public void RoundTripsNestedBlocks(string markdown) =>
+        Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
+
+    [Fact]
+    public void RestoresBackslashesOnlyInFileLinks()
+    {
+        var page = new XElement(XName.Get("Page", Ns));
+        HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml(@"[f](https://x.test/files/a%5Cb.txt) [g](file:///C:\\x)"));
+
+        Assert.Equal("<a href=\"https://x.test/files/a%5Cb.txt\">f</a> <a href=\"file:///C:\\x\">g</a>", page.Descendants(XName.Get("T", Ns)).Single().Value);
+    }
+
+    [Fact]
+    public void SkipsStyleDefsWithANonNumericIndex()
+    {
+        var page = new XElement(XName.Get("Page", Ns), new XElement(XName.Get("QuickStyleDef", Ns), new XAttribute("index", "x"), new XAttribute("name", "p")));
+        HtmlToOneNote.AddToPage(page, "<h1>H</h1>");
+
+        Assert.Contains(page.Elements(XName.Get("QuickStyleDef", Ns)), d => (string?)d.Attribute("name") == "h1");
+    }
+
+    [Fact]
+    public void TitleKeepsAnAutolink() =>
+        Assert.Equal("Notes for https://x.test", MarkdownToOneNote.SplitTitle("# Notes for <https://x.test>").Title);
+
+    [Fact]
     public void WritesAnchorsWithoutAHrefAsText() =>
         Assert.Equal("# P\n\nTop of page", Read("<one:OE><one:T><![CDATA[<a name=\"top\">Top</a> of page]]></one:T></one:OE>"));
 

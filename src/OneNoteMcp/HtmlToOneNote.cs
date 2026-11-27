@@ -48,9 +48,9 @@ public static partial class HtmlToOneNote
         var defs = page.Elements(One + "QuickStyleDef").ToList();
 
         // Reuse the page's styles by name. New ones get the next free indexes.
-        var indexes = defs.Where(d => d.Attribute("name") is not null)
+        var indexes = defs.Where(d => d.Attribute("name") is not null && int.TryParse((string?)d.Attribute("index"), out _))
             .GroupBy(d => (string)d.Attribute("name")!)
-            .ToDictionary(g => g.Key, g => int.Parse((string?)g.First().Attribute("index") ?? "0"));
+            .ToDictionary(g => g.Key, g => int.Parse((string)g.First().Attribute("index")!));
         var builder = new Builder(indexes, defs.Select(d => int.TryParse((string?)d.Attribute("index"), out var i) ? i : 0).DefaultIfEmpty(-1).Max() + 1);
 
         var outline = new XElement(One + "Outline");
@@ -138,7 +138,14 @@ public static partial class HtmlToOneNote
     /// The link target, with backslashes back.
     /// </summary>
     /// <remarks>Markdig writes a backslash in a URL as <c>%5C</c>, which breaks <c>\\server\share</c> links in OneNote.</remarks>
-    private static string Href(string? href) => (href ?? "").Replace("%5C", "\\", StringComparison.OrdinalIgnoreCase);
+    /// <remarks>Only file-share and file: links: elsewhere %5C is part of the URL.</remarks>
+    private static string Href(string? href)
+    {
+        href ??= "";
+        return href.StartsWith("%5C%5C", StringComparison.OrdinalIgnoreCase) || href.StartsWith(@"\\") || href.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+            ? href.Replace("%5C", "\\", StringComparison.OrdinalIgnoreCase)
+            : href;
+    }
 
     /// <param name="indexes">The page's QuickStyleDef indexes by name</param>
     /// <param name="nextIndex">The first free QuickStyleDef index</param>
@@ -244,11 +251,13 @@ public static partial class HtmlToOneNote
                         _inQuote = outerQuote;
                         break;
                     case "ul" or "ol":
-                        // Keeps back-to-back lists of the same kind apart. Bullets then numbers already read as two lists.
+                        // Keeps back-to-back lists of the same kind apart. Bullets then numbers, or a list then a quoted list, already read as two lists.
                         var kind = e.LocalName == "ol" ? "Number" : "Bullet";
-                        if (parent.Elements(One + "OE").LastOrDefault()?.Element(One + "List")?.Element(One + kind) is not null)
+                        var previousOe = parent.Elements(One + "OE").LastOrDefault();
+                        var previousQuoted = previousOe is not null && indexes.TryGetValue("blockquote", out var q) && (string?)previousOe.Attribute("quickStyleIndex") == q.ToString();
+                        if (previousOe?.Element(One + "List")?.Element(One + kind) is not null && previousQuoted == _inQuote)
                         {
-                            Oe(parent, "");
+                            Oe(parent, "", style: _inQuote ? StyleIndex("blockquote") : null);
                         }
 
                         ListItems(e, parent);

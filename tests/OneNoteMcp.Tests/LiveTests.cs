@@ -128,6 +128,25 @@ public class LiveTests
             - after
 
             func<strong>(x)</strong> and [`a[0]`](https://x.test/code)
+
+            - nested code
+
+              ```
+              a
+              ```
+
+            ```
+            b
+            ```
+
+            - x
+              - a
+
+              * b
+
+            > - quoted a
+            >
+            > * quoted b
             """.Replace("\r\n", "\n");
 
         // OneNote numbers each list itself, from 1

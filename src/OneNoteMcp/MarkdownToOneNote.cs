@@ -47,6 +47,7 @@ public static class MarkdownToOneNote
         LiteralInline literal => literal.Content.ToString(),
         CodeInline code => code.Content,
         HtmlEntityInline entity => entity.Transcoded.ToString(),
+        AutolinkInline autolink => autolink.Url,
         LineBreakInline => " ",
         ContainerInline child => PlainText(child),
         _ => "",

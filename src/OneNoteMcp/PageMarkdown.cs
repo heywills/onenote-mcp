@@ -80,15 +80,20 @@ public static partial class PageMarkdown
         /// <remarks>Its content must follow on the next line: a blank line after a bare marker ends the item.</remarks>
         private bool _bareMarker;
 
-        /// <summary>Use <c>*</c> and <c>1)</c> markers.</summary>
-        /// <remarks>Side-by-side outlines that both hold lists would read as one list.</remarks>
-        private bool _altMarkers;
+        /// <summary>The list indents that use <c>*</c> and <c>1)</c> markers.</summary>
+        /// <remarks>Back-to-back lists of the same kind, or in side-by-side outlines, would read as one list.</remarks>
+        private readonly HashSet<string> _altIndents = [];
 
         public List<ImageRef> Images { get; } = [];
 
         public void NewOutline()
         {
-            _altMarkers = _kind == "list" && !_altMarkers;
+            var flip = _kind == "list" && !_altIndents.Contains("");
+            _altIndents.Clear();
+            if (flip)
+            {
+                _altIndents.Add("");
+            }
 
             Separate(null);
         }
@@ -115,17 +120,24 @@ public static partial class PageMarkdown
             var prefix = quoteColumn is null ? indent : quoteColumn + "> " + indent[quoteColumn.Length..];
             var list = oe.Element(One + "List");
 
-            // A top-level switch between bullets and numbers already starts a new list
-            if (list is not null && _kind == "list" && prefix is "" or "> " && (list.Element(One + "Bullet") is not null) != _topLevelBullet)
+            if (list is not null)
             {
-                _altMarkers = false;
+                // A new item ends the deeper lists, so their alternate markers no longer apply
+                _altIndents.RemoveWhere(i => i.Length > indent.Length);
+
+                // A top-level switch between bullets and numbers already starts a new list
+                if (_kind == "list" && prefix is "" or "> " && (list.Element(One + "Bullet") is not null) != _topLevelBullet)
+                {
+                    _altIndents.Remove("");
+                }
             }
 
             // OneNote's number text can be a letter or roman numeral ("a.", "iv."): Markdown takes digits only.
+            var alt = _altIndents.Contains(indent);
             var numberText = (string?)list?.Element(One + "Number")?.Attribute("text");
             var marker = list?.Element(One + "Number") is not null
-                ? (numberText is not null && NumberMarker().Match(numberText) is { Success: true } digits ? digits.Groups[1].Value : $"{number}") + (_altMarkers ? ") " : ". ")
-                : list is not null ? (_altMarkers ? "* " : "- ") : null;
+                ? (numberText is not null && NumberMarker().Match(numberText) is { Success: true } digits ? digits.Groups[1].Value : $"{number}") + (alt ? ") " : ". ")
+                : list is not null ? (alt ? "* " : "- ") : null;
 
             var html = OeHtml(oe);
             var hasText = oe.Element(One + "T") is not null && oe != repeatedTitle;
@@ -154,7 +166,7 @@ public static partial class PageMarkdown
                 }
                 else if (text.Length == 0)
                 {
-                    Blank(indent);
+                    Blank(indent, quote);
                 }
                 else if (heading.Success)
                 {
@@ -280,6 +292,12 @@ public static partial class PageMarkdown
 
         private void CodeLine(string indent, string text)
         {
+            // A block at another indent is another block, such as one in a list item and one after the list
+            if (_kind == "code" && indent != _codeIndent)
+            {
+                Separate(null);
+            }
+
             if (_kind != "code")
             {
                 ResetMarkersAtTopLevel(indent);
@@ -294,22 +312,32 @@ public static partial class PageMarkdown
         }
 
         /// <summary>
-        /// A blank OE ends an open code block, quote, or top-level list, so back-to-back ones stay separate.
+        /// A blank OE ends an open code block, a list, or a quote, so back-to-back ones stay separate.
         /// </summary>
-        /// <remarks>The next list after a blank uses the other markers, or Markdown would join the two lists.</remarks>
-        private void Blank(string indent)
+        /// <remarks>
+        /// - The next list at that indent uses the other markers, or Markdown would join the two lists.
+        /// - A blank OE in the quote style keeps the quote going.
+        /// </remarks>
+        private void Blank(string indent, bool quote)
         {
-            if (_kind == "list" && indent.Length == 0)
+            if (_kind == "list")
             {
-                _altMarkers = !_altMarkers;
-                Separate(null);
+                if (!_altIndents.Remove(indent))
+                {
+                    _altIndents.Add(indent);
+                }
+
+                _kind = "listBreak"; // the next list item separates
             }
             else if (_kind == "code")
             {
                 Separate(null);
             }
 
-            _quotePrefix = null;
+            if (!quote)
+            {
+                _quotePrefix = null;
+            }
         }
 
         /// <summary>
@@ -319,7 +347,7 @@ public static partial class PageMarkdown
         {
             if (prefix is "" or "> ")
             {
-                _altMarkers = false;
+                _altIndents.Clear();
             }
         }
 
@@ -385,7 +413,9 @@ public static partial class PageMarkdown
     }
 
     /// <param name="inLink">Inside link text, where any bracket outside code would end the link</param>
-    private static string Inline(IEnumerable<INode> nodes, bool inCode, (bool Bold, bool Italic) ignore, bool inLink = false)
+    /// <param name="outerBefore">The character before these nodes, for emphasis flanking</param>
+    /// <param name="outerAfter">The character after these nodes, for emphasis flanking</param>
+    private static string Inline(IEnumerable<INode> nodes, bool inCode, (bool Bold, bool Italic) ignore, bool inLink = false, char outerBefore = ' ', char outerAfter = ' ')
     {
         var sb = new StringBuilder();
         var list = nodes.ToList();
@@ -410,10 +440,11 @@ public static partial class PageMarkdown
                 continue;
             }
 
-            // Neighbors with the same formatting (OneNote splits runs) wrap once: **foobar**, not **foo****bar**.
+            // Neighbors with the same formatting wrap once: **foobar**, not **foo****bar**.
+            // OneNote splits runs where only the color or font changes, so compare formatting, not the whole style.
             var run = new List<IElement> { e };
             while (e.LocalName is not ("a" or "br" or "img") && i + 1 < list.Count && list[i + 1] is IElement next
-                && next.LocalName == e.LocalName && next.GetAttribute("style") == e.GetAttribute("style"))
+                && next.LocalName is not ("a" or "br" or "img") && Formatting(next) == Formatting(e))
             {
                 run.Add(next);
                 i++;
@@ -422,7 +453,9 @@ public static partial class PageMarkdown
             var style = StyleOf(e.GetAttribute("style") ?? "");
             var tag = e.LocalName;
             var code = inCode || style.Code || tag == "code";
-            var inner = Inline(run.SelectMany(r => r.ChildNodes), code, ignore, inLink || tag == "a");
+            var before = sb.Length > 0 ? sb[^1] : outerBefore;
+            var after = i + 1 < list.Count && list[i + 1].TextContent is { Length: > 0 } nextText ? nextText[0] : outerAfter;
+            var inner = Inline(run.SelectMany(r => r.ChildNodes), code, ignore, inLink || tag == "a", before, after);
 
             if (tag == "br")
             {
@@ -453,8 +486,6 @@ public static partial class PageMarkdown
                 var strike = style.Strike || tag is "s" or "del" or "strike";
                 var italic = (style.Italic || tag is "i" or "em") && !ignore.Italic;
                 var bold = (style.Bold || tag is "b" or "strong") && !ignore.Bold;
-                var before = sb.Length > 0 ? sb[^1] : ' ';
-                var after = i + 1 < list.Count && list[i + 1].TextContent is { Length: > 0 } nextText ? nextText[0] : ' ';
 
                 if (!MarkersCanWrap(inner, before, after))
                 {
@@ -473,6 +504,16 @@ public static partial class PageMarkdown
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// The Markdown formatting an element carries: bold, italic, strikethrough, code.
+    /// </summary>
+    private static (bool Bold, bool Italic, bool Strike, bool Code) Formatting(IElement e)
+    {
+        var s = StyleOf(e.GetAttribute("style") ?? "");
+        return (s.Bold || e.LocalName is "b" or "strong", s.Italic || e.LocalName is "i" or "em",
+            s.Strike || e.LocalName is "s" or "del" or "strike", s.Code || e.LocalName == "code");
     }
 
     /// <summary>
