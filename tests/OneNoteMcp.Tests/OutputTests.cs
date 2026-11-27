@@ -44,6 +44,27 @@ public class OutputTests
     public void RejectsInvalidFileNames(string path) =>
         Assert.Contains("can't hold", Assert.Throws<McpException>(() => _tools.GetPage("{page}", path)).Message);
 
+    [Theory]
+    [InlineData(@"\\.\pipe\name")]
+    [InlineData(@"\\?\C:\work\page.md")]
+    [InlineData(@"C:\work\NUL")]
+    public void RejectsDevicePaths(string path) =>
+        Assert.Contains("device path", Assert.Throws<McpException>(() => _tools.GetPage("{page}", path)).Message);
+
+    [Theory]
+    [InlineData(@"C:\work\page.md.")]
+    [InlineData(@"C:\work\page.md ")]
+    [InlineData(@"C:\does-not-exist\.")]
+    public void RejectsNamesWindowsRenames(string path) =>
+        Assert.Contains("dot or space", Assert.Throws<McpException>(() => _tools.GetPage("{page}", path)).Message);
+
+    [Theory]
+    [InlineData(@"C:\work\CON.md")]
+    [InlineData(@"C:\work\aux")]
+    [InlineData(@"C:\work\COM9.txt")]
+    public void RejectsReservedNames(string path) =>
+        Assert.Contains("reserves", Assert.Throws<McpException>(() => _tools.GetPage("{page}", path)).Message);
+
     [Fact]
     public void RejectsPathAndInlineTogether() =>
         Assert.Contains("not both", Assert.Throws<McpException>(() => _tools.GetPage("{page}", @"C:\work\page.md", inline: true)).Message);

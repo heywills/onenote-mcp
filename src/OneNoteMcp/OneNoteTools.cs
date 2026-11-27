@@ -10,7 +10,7 @@ using static OneNoteMcp.Hierarchy;
 namespace OneNoteMcp;
 
 [McpServerToolType]
-public sealed class OneNoteTools(OneNoteClient oneNote)
+public sealed partial class OneNoteTools(OneNoteClient oneNote)
 {
     private const int DefaultMaxImageKb = 512;
     private const string OutputPathDescription = "Absolute path of the file to save, such as C:\\work\\page.md. Overwrites it. Required unless inline is true.";
@@ -285,18 +285,48 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
             throw new McpException($"outputPath must be absolute, such as C:\\work\\page.md, not \"{outputPath}\"");
         }
 
+        // NUL and other device names become \\.\ paths here
+        if (IsDevicePath(outputPath) || IsDevicePath(Path.GetFullPath(outputPath)))
+        {
+            throw new McpException($"outputPath must be a file path, not a device path: \"{outputPath}\"");
+        }
+
         var name = Path.GetFileName(outputPath);
         if (name.Length == 0 || Path.GetDirectoryName(outputPath) is null || Directory.Exists(outputPath))
         {
             throw new McpException($"outputPath must name a file, not a folder: \"{outputPath}\"");
         }
 
-        // Includes ':', which would otherwise write to an NTFS alternate data stream
+        CheckFileName(name);
+    }
+
+    private static bool IsDevicePath(string path) => path.StartsWith(@"\\.\") || path.StartsWith(@"\\?\");
+
+    /// <remarks>
+    /// - Windows drops a trailing dot or space, so the file would land under another name.
+    /// - ':' would write to an NTFS alternate data stream.
+    /// - CON, AUX, COM1 and the like make files many tools can't open or delete.
+    /// </remarks>
+    private static void CheckFileName(string name)
+    {
+        if (name.EndsWith('.') || name.EndsWith(' '))
+        {
+            throw new McpException($"outputPath's file name can't end with a dot or space: \"{name}\"");
+        }
+
         if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         {
             throw new McpException($"outputPath has characters a file name can't hold: \"{name}\"");
         }
+
+        if (ReservedName().IsMatch(Path.GetFileNameWithoutExtension(name)))
+        {
+            throw new McpException($"outputPath uses a name Windows reserves for devices: \"{name}\"");
+        }
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(CON|PRN|AUX|NUL|COM[0-9\u00B9\u00B2\u00B3]|LPT[0-9\u00B9\u00B2\u00B3])$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex ReservedName();
 
     private static string Output(string content, string outputPath, bool inline, string pageId)
     {
