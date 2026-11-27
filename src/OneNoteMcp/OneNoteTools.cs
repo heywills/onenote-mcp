@@ -22,7 +22,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     private const string ImagesDescription = """
 
         Local PNG, JPEG, GIF, BMP, and TIFF images are embedded. From inputPath: only images inside its folder, by relative path. Inline content: absolute paths.
-        Web URLs, network paths, files over 50 MB, and missing or other files stay links. The result counts both.
+        Web URLs, network shares and drives, symbolic links, files over 50 MB, images past 50 MB per page, and missing or other files stay links. The result counts both.
         """;
 
     private const string InlineDescription = "Return the content in the response instead of saving a file. Don't pass outputPath with it.";

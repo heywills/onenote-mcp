@@ -161,10 +161,63 @@ public class OutputTests
     [InlineData("%5C%5Chost%5Cshare%5Ca.png")]
     [InlineData("%2F%2Fhost%2Fshare%2Fa.png")]
     [InlineData(@"\/host/share/a.png")]
+    [InlineData("file:///%2Fhost/share/a.png")]
+    [InlineData("file:///%5Chost/share/a.png")]
     public void NeverReadsNetworkPaths(string src)
     {
         Assert.Null(PageFiles.ReadImage(src, null));
         Assert.Null(PageFiles.ReadImage(src, Path.GetTempPath()));
+    }
+
+    [Fact]
+    public void ReadsImagesBesideAFileAtADriveRoot()
+    {
+        // The temp drive's root stands in for C:\: only the folder prefix logic is under test
+        var root = Path.GetPathRoot(Path.GetTempPath())!;
+        var name = $"onenote-mcp-test-{Guid.NewGuid():N}";
+        var image = Path.Combine(Path.GetTempPath(), name, "a.png");
+        PageFiles.Write(image, [1]);
+        try
+        {
+            var relative = Path.GetRelativePath(root, image).Replace('\\', '/');
+            Assert.Equal([1], PageFiles.ReadImage(relative, root));
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(image)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SkipsImagesThroughAJunction()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+        var outside = Path.Combine(folder, "outside");
+        var page = Path.Combine(folder, "page");
+        PageFiles.Write(Path.Combine(outside, "a.png"), [1]);
+        Directory.CreateDirectory(page);
+
+        // A junction needs no admin rights, unlike a symbolic link
+        using (var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{Path.Combine(page, "link")}\" \"{outside}\"") { CreateNoWindow = true, UseShellExecute = false })!)
+        {
+            mklink.WaitForExit();
+        }
+
+        try
+        {
+            Assert.True(Directory.Exists(Path.Combine(page, "link")));
+            Assert.Null(PageFiles.ReadImage("link/a.png", page));
+        }
+        finally
+        {
+            // Remove the junction itself first, so the recursive delete can't follow it
+            if (Directory.Exists(Path.Combine(page, "link")))
+            {
+                Directory.Delete(Path.Combine(page, "link"));
+            }
+
+            Directory.Delete(folder, recursive: true);
+        }
     }
 
     [Fact]

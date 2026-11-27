@@ -86,13 +86,16 @@ public static partial class PageFiles
     /// <returns>Null for anything that should stay a link: a web or data URL, a disallowed or missing path, or a file that's too large or can't be read</returns>
     /// <remarks>
     /// - Files can come from the web, so their images must sit inside the file's folder. Only inline content may use absolute paths.
-    /// - Network paths are never read: opening one sends the user's Windows credentials to that host.
+    /// - Network locations are never read, UNC or mapped drive: opening one sends the user's Windows credentials to that host.
+    /// - Neither are paths through a symbolic link or junction, which could point anywhere.
+    /// - These checks run on the final full path, before any call that touches the file.
     /// </remarks>
     public static byte[]? ReadImage(string src, string? baseFolder)
     {
         try
         {
-            if (ImagePath(src, baseFolder) is not { } path)
+            if (ImagePath(src, baseFolder) is not { } candidate || Path.GetFullPath(candidate) is not { } path
+                || !IsLocal(path) || GoesThroughLink(path))
             {
                 return null;
             }
@@ -133,14 +136,44 @@ public static partial class PageFiles
             return null;
         }
 
-        var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseFolder)) + Path.DirectorySeparatorChar;
+        // A drive root like C:\ already ends in a separator
+        var folder = Path.GetFullPath(baseFolder);
+        folder = Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar;
         var full = Path.GetFullPath(Path.Combine(folder, decoded.Replace('/', '\\')));
-        return full.StartsWith(folder, StringComparison.OrdinalIgnoreCase) && !IsNetworkPath(full) ? full : null;
+        return full.StartsWith(folder, StringComparison.OrdinalIgnoreCase) ? full : null;
     }
 
     /// <summary>A UNC path in any spelling, including protocol-relative URLs like <c>//host/a.png</c>.</summary>
     private static bool IsNetworkPath(string path) =>
         path.Length >= 2 && path[0] is '\\' or '/' && path[1] is '\\' or '/';
+
+    /// <summary>A full path on a local drive: not UNC, not a device, not a mapped network drive.</summary>
+    private static bool IsLocal(string fullPath) =>
+        !IsNetworkPath(fullPath) && !IsDevicePath(fullPath) && Path.GetPathRoot(fullPath) is { Length: > 0 } root
+        && new DriveInfo(root).DriveType != DriveType.Network;
+
+    /// <summary>Whether the file, or a folder above it, is a symbolic link or junction.</summary>
+    /// <remarks>
+    /// - OneDrive placeholders are reparse points too, but have no link target, so they still load.
+    /// </remarks>
+    private static bool GoesThroughLink(string fullPath)
+    {
+        var file = new FileInfo(fullPath);
+        if (file.LinkTarget is not null)
+        {
+            return true;
+        }
+
+        for (var folder = file.Directory; folder is not null; folder = folder.Parent)
+        {
+            if (folder.LinkTarget is not null)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>Writes UTF-8 without a byte-order mark, creating missing folders.</summary>
     /// <returns>The full path written</returns>

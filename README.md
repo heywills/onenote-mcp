@@ -28,7 +28,8 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 `onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path. They embed local images:
 - From a file: only images inside the file's folder, by relative path
 - Inline: absolute paths too
-- Web URLs, network paths, files over 50 MB, and other types stay links. Images over 10 MB are shrunk.
+- Web URLs, network shares and mapped network drives, symbolic links, files over 50 MB, and other types stay links. So do all images of a file on a share.
+- Images over 10 MB are shrunk. Past 50 MB of images on one page, the rest stay links.
 
 ## Requirements
 

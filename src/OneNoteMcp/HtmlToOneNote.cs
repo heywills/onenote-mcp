@@ -39,6 +39,9 @@ public static partial class HtmlToOneNote
     private static readonly HashSet<string> Inline =
         ["b", "strong", "i", "em", "u", "s", "strike", "del", "sup", "sub", "a", "span", "code", "img"];
 
+    /// <summary>The most image data one page embeds</summary>
+    public const long MaxPageImageBytes = 50L * 1024 * 1024;
+
     /// <summary>Elements whose text a page never shows, such as those from a saved web page's head</summary>
     private static readonly HashSet<string> NonContent =
         ["script", "style", "title", "template", "meta", "link", "noscript", "noframes", "iframe"];
@@ -231,15 +234,21 @@ public static partial class HtmlToOneNote
             return oe;
         }
 
+        private long _embeddedBytes;
+
         /// <summary>The OneNote image for an <c>img</c> whose file loads. Null for anything else, which stays a link.</summary>
+        /// <remarks>
+        /// - Images past <see cref="MaxPageImageBytes"/> in total stay links, so one page update stays a size OneNote accepts.
+        /// </remarks>
         private XElement? EmbeddedImage(INode n)
         {
             if (n is not IElement { LocalName: "img" } img || loadImage?.Invoke(img.GetAttribute("src") ?? "") is not { } data
-                || Images.ForOneNote(data) is not { } image)
+                || Images.ForOneNote(data) is not { } image || _embeddedBytes + image.Data.Length > MaxPageImageBytes)
             {
                 return null;
             }
 
+            _embeddedBytes += image.Data.Length;
             Embedded++;
             return new XElement(One + "Image", new XAttribute("format", image.Format), new XElement(One + "Data", Convert.ToBase64String(image.Data)));
         }

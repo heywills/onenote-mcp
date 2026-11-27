@@ -81,6 +81,16 @@ public class HtmlToOneNoteTests
         Assert.Equal((0, 1), ConvertWithImages("<noscript><img src=\"a.png\"></noscript><p><a href=\"x\"><img src=\"b.png\"></a></p>").Images);
 
     [Fact]
+    public void LinksImagesPastThePageBudget()
+    {
+        var nineMb = new byte[9 * 1024 * 1024];
+        Png.CopyTo(nineMb, 0);
+        var page = new XElement(One + "Page", new XElement(One + "Title"));
+        var html = string.Concat(Enumerable.Range(1, 6).Select(i => $"<p><img src=\"{i}.png\"></p>"));
+        Assert.Equal((5, 1), HtmlToOneNote.AddToPage(page, html, loadImage: _ => nineMb));
+    }
+
+    [Fact]
     public void CountsLinksAsWritten() =>
         Assert.Equal((1, 2), ConvertWithImages("<h2>Logo <img src=\"missing-1.png\"></h2><ul><li><img src=\"a.png\"></li><li>text <img src=\"missing-2.png\"></li></ul>").Images);
 
