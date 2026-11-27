@@ -19,13 +19,18 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_get_image` | One image by callback ID |
 | `onenote_search` | Search all notebooks |
 | `onenote_search_in_notebook` | Search one notebook |
-| `onenote_create_page` | New page from HTML: headings, nested lists, tables, code |
-| `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown. |
+| `onenote_create_page` | New page from HTML: headings, nested lists, tables, code, images |
+| `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown, images included. |
 | `onenote_delete_page` | Moves a page to Deleted Pages. Subpages stay. |
 
 `onenote_get_page`, `onenote_get_page_by_link`, and `onenote_get_page_raw` save to `outputPath`, an absolute file path the agent names, and return the path. The Markdown tools save images full size to a folder next to the page and link them: `page.md` gets `page_images`. `inline=true` returns the page in the response instead, with `[Image N]` and callback IDs for the image tools.
 
-`onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path.
+`onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path. They embed local images:
+- From a file: only images inside the file's folder, by relative path
+- Inline: absolute paths too
+- Web URLs, network shares and mapped network drives, links that lead out of the file's folder or to a network, files over 50 MB, and other types stay links. So do all images of a file on a share.
+- An image inside a heading, a link, formatting, or a table header stays a link.
+- Images over 10 MB are shrunk. Images that would push a page past 50 MB stay links.
 
 ## Requirements
 
@@ -52,7 +57,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
   - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
   - Numbered lists start at 1. OneNote numbers lists itself, so separate lists alternate between `1.` and `1)` in OneNote to restart.
   - A hard line break splits a paragraph in two, and becomes a space in a list item. OneNote drops line breaks inside a paragraph.
-  - Images become links. Code blocks lose their language, and OneNote stores a tab in code as 8 spaces.
+  - An image in a paragraph splits it: text, image, text. In a list item, it moves below the item text. Code blocks lose their language, and OneNote stores a tab in code as 8 spaces.
   - Headings, tables, and code inside a quote lose the quote. Nested quotes flatten to one level.
   - Bold that covers a whole table header cell is dropped, since the header row is already bold. So is italic that covers a whole h4 or h6 heading, since those styles are italic.
 

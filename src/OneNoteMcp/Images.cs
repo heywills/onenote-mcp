@@ -22,6 +22,44 @@ public static class Images
         _ => "application/octet-stream",
     };
 
+    /// <summary>Larger images are shrunk before they go into a page, so the page update stays a size OneNote accepts.</summary>
+    public const int MaxEmbedKb = 10 * 1024;
+
+    /// <summary>The image as OneNote stores it: PNG or JPEG as is, other bitmaps as PNG, and anything over <see cref="MaxEmbedKb"/> shrunk.</summary>
+    /// <returns>Null for data that isn't an image OneNote can hold, such as WebP or a vector format</returns>
+    public static (byte[] Data, string Format)? ForOneNote(byte[] data)
+    {
+        var format = MimeType(data) switch
+        {
+            "image/png" => "png",
+            "image/jpeg" => "jpg",
+            "image/gif" or "image/bmp" or "image/tiff" => "convert",
+            _ => null,
+        };
+
+        try
+        {
+            return format switch
+            {
+                null => null,
+                _ when data.Length > MaxEmbedKb * 1024 => (FitToSize(data, MaxEmbedKb).Data, "png"),
+                // A small palette GIF can grow into a large PNG
+                "convert" => (FitToSize(ToPng(data), MaxEmbedKb).Data, "png"),
+                _ => (data, format),
+            };
+        }
+        catch (Exception e) when (e is McpException or ArgumentException or ExternalException or OutOfMemoryException)
+        {
+            return null;
+        }
+    }
+
+    private static byte[] ToPng(byte[] data)
+    {
+        using var source = Image.FromStream(new MemoryStream(data));
+        return ResizeToPng(source, source.Width, source.Height);
+    }
+
     /// <summary>The file extension for the image's type, without the dot</summary>
     public static string Extension(ReadOnlySpan<byte> data) => MimeType(data) switch
     {

@@ -37,6 +37,79 @@ public class HtmlToOneNoteTests
         Assert.Equal(["Hi", "<a href=\"https://x.test\">Share</a>"], Texts(page));
     }
 
+    private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    private static (XElement Page, (int Embedded, int Linked) Images) ConvertWithImages(string html)
+    {
+        var page = new XElement(One + "Page", new XElement(One + "Title"));
+        var images = HtmlToOneNote.AddToPage(page, html, loadImage: (src, _) => src.StartsWith("missing") ? null : Png);
+        return (page, images);
+    }
+
+    // What each OE holds, in order: its text, or "image"
+    private static List<string> Content(XElement page) => page.Descendants(One + "OE")
+        .Select(oe => oe.Element(One + "Image") is not null ? "image" : (string?)oe.Element(One + "T") ?? "").ToList();
+
+    [Fact]
+    public void EmbedsImagesOnTheirOwnLine()
+    {
+        var (page, images) = ConvertWithImages("<p>before <img src=\"a.png\"> after</p><p><img src=\"missing.png\" alt=\"gone\"></p>");
+
+        Assert.Equal(["before", "image", "after", "<a href=\"missing.png\">gone</a>"], Content(page));
+        Assert.Equal((1, 1), images);
+        var image = page.Descendants(One + "Image").Single();
+        Assert.Equal("png", (string?)image.Attribute("format"));
+        Assert.Equal(System.Convert.ToBase64String(Png), (string?)image.Element(One + "Data"));
+    }
+
+    [Fact]
+    public void EmbedsImagesInListItems()
+    {
+        var (page, images) = ConvertWithImages("<ul><li><img src=\"a.png\"></li><li>text <img src=\"b.png\"></li></ul>");
+
+        var items = page.Descendants(One + "OEChildren").First().Elements(One + "OE").ToList();
+        Assert.NotNull(items[0].Element(One + "List"));
+        Assert.NotNull(items[0].Element(One + "Image"));
+        Assert.Null(items[0].Element(One + "T"));
+        Assert.Equal("text", (string?)items[1].Element(One + "T"));
+        Assert.NotNull(items[1].Element(One + "OEChildren")!.Element(One + "OE")!.Element(One + "Image"));
+        Assert.Equal((2, 0), images);
+    }
+
+    [Fact]
+    public void CountsOnlyShownImages() =>
+        Assert.Equal((0, 1), ConvertWithImages("<noscript><img src=\"a.png\"></noscript><p><a href=\"x\"><img src=\"b.png\"></a></p>").Images);
+
+    [Fact]
+    public void LinksImagesPastThePageBudget()
+    {
+        var nineMb = new byte[9 * 1024 * 1024];
+        Png.CopyTo(nineMb, 0);
+        var page = new XElement(One + "Page", new XElement(One + "Title"));
+        var html = string.Concat(Enumerable.Range(1, 6).Select(i => $"<p><img src=\"{i}.png\"></p>"));
+        var limits = new List<long>();
+        Assert.Equal((5, 1), HtmlToOneNote.AddToPage(page, html, loadImage: (_, limit) =>
+        {
+            limits.Add(limit);
+            return limit >= nineMb.Length ? nineMb : null;
+        }));
+
+        // With 5 MB left, the last read is capped there: a 9 MB file isn't read at all
+        Assert.Equal(5 * 1024 * 1024, limits[^1]);
+    }
+
+    [Fact]
+    public void CountsLinksAsWritten() =>
+        Assert.Equal((1, 2), ConvertWithImages("<h2>Logo <img src=\"missing-1.png\"></h2><ul><li><img src=\"a.png\"></li><li>text <img src=\"missing-2.png\"></li></ul>").Images);
+
+    [Fact]
+    public void KeepsImagesInAQuote()
+    {
+        var (page, _) = ConvertWithImages("<blockquote><p>Quoted</p><p><img src=\"a.png\"></p></blockquote>");
+        var styles = page.Descendants(One + "OE").Select(oe => (string?)oe.Attribute("quickStyleIndex")).Distinct();
+        Assert.Single(styles);
+    }
+
     [Fact]
     public void KeepsInlineFormattingAndSpaces()
     {

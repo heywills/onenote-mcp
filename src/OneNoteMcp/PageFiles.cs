@@ -78,6 +78,124 @@ public static partial class PageFiles
         return string.IsNullOrWhiteSpace(text) ? throw new McpException($"\"{path}\" is empty") : text;
     }
 
+    /// <summary>Files larger than this stay links, so a page can't make the server read a huge file.</summary>
+    public const long MaxImageBytes = 50L * 1024 * 1024;
+
+    /// <summary>Reads a local image that a page's Markdown or HTML names.</summary>
+    /// <param name="baseFolder">The input file's folder, or null for content the agent passed inline.</param>
+    /// <returns>Null for anything that should stay a link: a web or data URL, a disallowed or missing path, or a file that's too large or can't be read</returns>
+    /// <remarks>
+    /// - Files can come from the web, so their images must sit inside the file's folder. Only inline content may use absolute paths.
+    /// - Network locations are never read, UNC or mapped drive: opening one sends the user's Windows credentials to that host.
+    /// - Symbolic links and junctions are checked too: see <see cref="HasUnsafeLink"/>.
+    /// - These checks run on the final full path, before any call that touches the file.
+    /// </remarks>
+    /// <param name="maxBytes">The largest file to read, at most <see cref="MaxImageBytes"/></param>
+    public static byte[]? ReadImage(string src, string? baseFolder, long maxBytes = MaxImageBytes)
+    {
+        try
+        {
+            if (ImagePath(src, baseFolder) is not { } candidate || Path.GetFullPath(candidate) is not { } path
+                || !IsLocal(path) || HasUnsafeLink(path, baseFolder))
+            {
+                return null;
+            }
+
+            Check(path, "image path");
+            var file = new FileInfo(path);
+            return file.Exists && file.Length <= Math.Min(maxBytes, MaxImageBytes) ? File.ReadAllBytes(path) : null;
+        }
+        catch (Exception e) when (e is McpException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or UriFormatException)
+        {
+            return null;
+        }
+    }
+
+    /// <returns>The full path of a local image the content may embed, or null</returns>
+    private static string? ImagePath(string src, string? baseFolder)
+    {
+        // Saved pages percent-encode their image links
+        var decoded = Uri.UnescapeDataString(src);
+        if (IsNetworkPath(src) || IsNetworkPath(decoded))
+        {
+            return null;
+        }
+
+        var isAbsolute = Uri.TryCreate(src, UriKind.Absolute, out var uri);
+        if (baseFolder is null)
+        {
+            if (isAbsolute)
+            {
+                return uri!.IsFile && !uri.IsUnc ? uri.LocalPath : null;
+            }
+
+            return Path.IsPathFullyQualified(decoded) ? decoded : null;
+        }
+
+        if (isAbsolute || Path.IsPathRooted(decoded))
+        {
+            return null;
+        }
+
+        // A drive root like C:\ already ends in a separator
+        var folder = Path.GetFullPath(baseFolder);
+        folder = Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(Path.Combine(folder, decoded.Replace('/', '\\')));
+        return full.StartsWith(folder, StringComparison.OrdinalIgnoreCase) ? full : null;
+    }
+
+    /// <summary>A UNC path in any spelling, including protocol-relative URLs like <c>//host/a.png</c>.</summary>
+    private static bool IsNetworkPath(string path) =>
+        path.Length >= 2 && path[0] is '\\' or '/' && path[1] is '\\' or '/';
+
+    /// <summary>A full path on a local drive: not UNC, not a device, not a mapped network drive.</summary>
+    private static bool IsLocal(string fullPath) =>
+        !IsNetworkPath(fullPath) && !IsDevicePath(fullPath) && Path.GetPathRoot(fullPath) is { Length: > 0 } root
+        && new DriveInfo(root).DriveType != DriveType.Network;
+
+    /// <summary>Whether the image's path goes through a symbolic link or junction it shouldn't follow.</summary>
+    /// <remarks>
+    /// - Below a file's folder, any link is unsafe: it could lead out of the folder.
+    /// - Elsewhere, such as a junctioned <c>C:\_git</c> above the folder, a link is fine when it points to a local path that isn't another link.
+    /// - OneDrive placeholders are reparse points too, but have no link target, so they still load.
+    /// - Checks the image path from the drive root down: reading a deeper part would make Windows follow a link above it, possibly to a share. The folders above a link's target aren't walked yet.
+    /// </remarks>
+    private static bool HasUnsafeLink(string fullPath, string? baseFolder)
+    {
+        var folder = baseFolder is null ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseFolder));
+        var nodes = new List<FileSystemInfo>();
+        for (FileSystemInfo? node = new FileInfo(fullPath); node is not null; node = Parent(node))
+        {
+            nodes.Add(node);
+        }
+
+        nodes.Reverse();
+        foreach (var node in nodes)
+        {
+            if (node.LinkTarget is not { } target)
+            {
+                continue;
+            }
+
+            var insideFolder = folder is not null && node.FullName.Length > folder.Length
+                && node.FullName.StartsWith(folder, StringComparison.OrdinalIgnoreCase);
+            var resolved = Path.GetFullPath(target, Path.GetDirectoryName(node.FullName) ?? node.FullName);
+            if (insideFolder || !IsLocal(resolved) || new FileInfo(resolved).LinkTarget is not null || new DirectoryInfo(resolved).LinkTarget is not null)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static DirectoryInfo? Parent(FileSystemInfo node) => node switch
+    {
+        FileInfo file => file.Directory,
+        DirectoryInfo directory => directory.Parent,
+        _ => null,
+    };
+
     /// <summary>Writes UTF-8 without a byte-order mark, creating missing folders.</summary>
     /// <returns>The full path written</returns>
     public static string Write(string path, string content) => Write(path, full => File.WriteAllText(full, content));

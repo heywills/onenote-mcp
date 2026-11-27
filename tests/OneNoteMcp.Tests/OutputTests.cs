@@ -118,6 +118,213 @@ public class OutputTests
     public void RejectsEmptyFiles() =>
         WithFile(new UTF8Encoding(false), " \n", path => Assert.Contains("is empty", Assert.Throws<McpException>(() => PageFiles.Read(path)).Message));
 
+    [Fact]
+    public void ReadsLocalImages()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+        var image = Path.Combine(folder, "Sprint #4_images", "image-1.png");
+        PageFiles.Write(image, [1, 2, 3]);
+        try
+        {
+            Assert.Equal([1, 2, 3], PageFiles.ReadImage("Sprint%20%234_images/image-1.png", folder));
+            Assert.Equal([1, 2, 3], PageFiles.ReadImage(image, null));
+            Assert.Equal([1, 2, 3], PageFiles.ReadImage(new Uri(image).AbsoluteUri, null));
+
+            // Inline content has no folder for relative paths
+            Assert.Null(PageFiles.ReadImage("Sprint%20%234_images/image-1.png", null));
+            Assert.Null(PageFiles.ReadImage("https://x.test/a.png", folder));
+            Assert.Null(PageFiles.ReadImage("data:image/png;base64,AAAA", folder));
+            Assert.Null(PageFiles.ReadImage("missing.png", folder));
+            Assert.Null(PageFiles.ReadImage("CON", folder));
+
+            // A file's images must sit inside its folder
+            var inner = Path.Combine(folder, "inner");
+            Directory.CreateDirectory(inner);
+            Assert.Null(PageFiles.ReadImage("../Sprint%20%234_images/image-1.png", inner));
+            Assert.Null(PageFiles.ReadImage("..%2FSprint%20%234_images%2Fimage-1.png", inner));
+            Assert.Null(PageFiles.ReadImage(image, inner));
+            Assert.Null(PageFiles.ReadImage(Uri.EscapeDataString(image), inner));
+            Assert.Null(PageFiles.ReadImage(new Uri(image).AbsoluteUri, inner));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    // Opening any of these would connect to the host and send the user's Windows credentials
+    [Theory]
+    [InlineData(@"\\host\share\a.png")]
+    [InlineData("//host/share/a.png")]
+    [InlineData("file://host/share/a.png")]
+    [InlineData("file:////host/share/a.png")]
+    [InlineData("%5C%5Chost%5Cshare%5Ca.png")]
+    [InlineData("%2F%2Fhost%2Fshare%2Fa.png")]
+    [InlineData(@"\/host/share/a.png")]
+    [InlineData("file:///%2Fhost/share/a.png")]
+    [InlineData("file:///%5Chost/share/a.png")]
+    public void NeverReadsNetworkPaths(string src)
+    {
+        Assert.Null(PageFiles.ReadImage(src, null));
+        Assert.Null(PageFiles.ReadImage(src, Path.GetTempPath()));
+    }
+
+    [Fact]
+    public void ReadsImagesBesideAFileAtADriveRoot()
+    {
+        // The temp drive's root stands in for C:\: only the folder prefix logic is under test
+        var root = Path.GetPathRoot(Path.GetTempPath())!;
+        var name = $"onenote-mcp-test-{Guid.NewGuid():N}";
+        var image = Path.Combine(Path.GetTempPath(), name, "a.png");
+        PageFiles.Write(image, [1]);
+        try
+        {
+            var relative = Path.GetRelativePath(root, image).Replace('\\', '/');
+            Assert.Equal([1], PageFiles.ReadImage(relative, root));
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(image)!, recursive: true);
+        }
+    }
+
+    // Like a junctioned C:\_git: the input file was read through the same link
+    [Fact]
+    public void FollowsALocalJunctionAboveTheFolder()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+        var real = Path.Combine(folder, "real");
+        var link = Path.Combine(folder, "link");
+        PageFiles.Write(Path.Combine(real, "page", "a.png"), [1]);
+        Junction(link, real);
+        try
+        {
+            Assert.Equal([1], PageFiles.ReadImage("a.png", Path.Combine(link, "page")));
+            Assert.Equal([1], PageFiles.ReadImage(Path.Combine(link, "page", "a.png"), null));
+        }
+        finally
+        {
+            Directory.Delete(link);
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void Junction(string link, string target)
+    {
+        // A junction needs no admin rights, unlike a symbolic link
+        using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"") { CreateNoWindow = true, UseShellExecute = false })!;
+        mklink.WaitForExit();
+        Assert.True(Directory.Exists(link));
+    }
+
+    [Fact]
+    public void SkipsImagesThroughAJunction()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+        var outside = Path.Combine(folder, "outside");
+        var page = Path.Combine(folder, "page");
+        PageFiles.Write(Path.Combine(outside, "a.png"), [1]);
+        Directory.CreateDirectory(page);
+        Junction(Path.Combine(page, "link"), outside);
+        try
+        {
+            Assert.Null(PageFiles.ReadImage("link/a.png", page));
+        }
+        finally
+        {
+            // Remove the junction itself first, so the recursive delete can't follow it
+            if (Directory.Exists(Path.Combine(page, "link")))
+            {
+                Directory.Delete(Path.Combine(page, "link"));
+            }
+
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SkipsFilesOverTheSizeLimit()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}.png");
+        using (var file = File.Create(path))
+        {
+            file.SetLength(PageFiles.MaxImageBytes + 1);
+        }
+
+        try
+        {
+            Assert.Null(PageFiles.ReadImage(path, null));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ShrinksLargeImagesForOneNote()
+    {
+        using var bitmap = new System.Drawing.Bitmap(3000, 3000);
+        var random = new Random(1);
+        for (var x = 0; x < 3000; x += 3)
+        {
+            for (var y = 0; y < 3000; y += 3)
+            {
+                bitmap.SetPixel(x, y, System.Drawing.Color.FromArgb(random.Next(256), random.Next(256), random.Next(256)));
+            }
+        }
+
+        using var bmp = new MemoryStream();
+        bitmap.Save(bmp, System.Drawing.Imaging.ImageFormat.Bmp);
+        Assert.True(bmp.Length > Images.MaxEmbedKb * 1024);
+
+        var image = Images.ForOneNote(bmp.ToArray());
+        Assert.Equal("png", image?.Format);
+        Assert.InRange(image!.Value.Data.Length, 1, Images.MaxEmbedKb * 1024);
+    }
+
+    [Fact]
+    public void CapsConvertedImages()
+    {
+        using var bitmap = new System.Drawing.Bitmap(2700, 2700, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        var data = bitmap.LockBits(new System.Drawing.Rectangle(0, 0, 2700, 2700), System.Drawing.Imaging.ImageLockMode.WriteOnly, bitmap.PixelFormat);
+        var bytes = new byte[data.Stride * data.Height];
+        new Random(1).NextBytes(bytes);
+        System.Runtime.InteropServices.Marshal.Copy(bytes, 0, data.Scan0, bytes.Length);
+        bitmap.UnlockBits(data);
+        using var gif = new MemoryStream();
+        bitmap.Save(gif, System.Drawing.Imaging.ImageFormat.Gif);
+        Assert.True(gif.Length < Images.MaxEmbedKb * 1024, $"GIF is {gif.Length / 1024} KB");
+
+        // The test only reaches the shrink if the plain conversion is over the limit
+        using (var decoded = System.Drawing.Image.FromStream(new MemoryStream(gif.ToArray())))
+        using (var copy = new System.Drawing.Bitmap(decoded))
+        using (var png = new MemoryStream())
+        {
+            copy.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+            Assert.True(png.Length > Images.MaxEmbedKb * 1024, $"PNG is only {png.Length / 1024} KB");
+        }
+
+        var image = Images.ForOneNote(gif.ToArray());
+        Assert.Equal("png", image?.Format);
+        Assert.InRange(image!.Value.Data.Length, 1, Images.MaxEmbedKb * 1024);
+    }
+
+    [Fact]
+    public void ConvertsImagesForOneNote()
+    {
+        using var bitmap = new System.Drawing.Bitmap(2, 2);
+        using var gif = new MemoryStream();
+        bitmap.Save(gif, System.Drawing.Imaging.ImageFormat.Gif);
+
+        var converted = Images.ForOneNote(gif.ToArray());
+        Assert.Equal("png", converted?.Format);
+        Assert.Equal("image/png", Images.MimeType(converted!.Value.Data));
+        Assert.Equal("jpg", Images.ForOneNote([0xFF, 0xD8, 0xFF, 0xE0])?.Format);
+        Assert.Null(Images.ForOneNote("RIFF\0\0\0\0WEBP"u8.ToArray()));
+        Assert.Null(Images.ForOneNote([0x47, 0x49, 0x46, 0x38, 0x00]));
+    }
+
     private static void WithFile(Encoding encoding, string text, Action<string> test, bool bom = false)
     {
         var path = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}.md");
