@@ -330,6 +330,15 @@ public class LiveTests
 
             var image = Assert.Single(Directory.GetFiles(Path.Combine(folder, "Sprint #4_images"), "image-1.*"));
             Assert.StartsWith("image/", Images.MimeType(File.ReadAllBytes(image)));
+
+            // Created again from the saved file, the page has the same images in the same places
+            static string Body(string inline) => inline.Split("\n\n---\n**Image References:**")[0];
+            var created = _tools.CreatePageFromMarkdown(SectionId(), inputPath: page);
+            WithCreated(created, copyId =>
+            {
+                Assert.Equal(saved.GetProperty("images").GetInt32(), JsonDocument.Parse(created).RootElement.GetProperty("images").GetInt32());
+                Assert.Equal(Body(_tools.GetPage(saved.GetProperty("page_id").GetString()!, inline: true)), Body(_tools.GetPage(copyId, inline: true)));
+            });
         }
         finally
         {

@@ -47,7 +47,9 @@ public static partial class HtmlToOneNote
     /// Appends <paramref name="html"/> to a page as an Outline, and adds the styles it needs.
     /// </summary>
     /// <param name="fromMarkdown">The HTML came from Markdown, whose table code keeps <c>\|</c> for a pipe</param>
-    public static void AddToPage(XElement page, string html, bool fromMarkdown = false)
+    /// <param name="loadImage">Returns an image's bytes from its <c>src</c>, or null to keep it a link</param>
+    /// <returns>How many images were embedded, and how many stayed links</returns>
+    public static (int Embedded, int Linked) AddToPage(XElement page, string html, bool fromMarkdown = false, Func<string, byte[]?>? loadImage = null)
     {
         // Parsed as body content even for a whole document: the parser ignores stray html, head, and body tags
         var body = new HtmlParser().ParseDocument($"<body>{html}</body>").Body!;
@@ -57,7 +59,7 @@ public static partial class HtmlToOneNote
         var indexes = defs.Where(d => d.Attribute("name") is not null && int.TryParse((string?)d.Attribute("index"), out _))
             .GroupBy(d => (string)d.Attribute("name")!)
             .ToDictionary(g => g.Key, g => int.Parse((string)g.First().Attribute("index")!));
-        var builder = new Builder(indexes, defs.Select(d => int.TryParse((string?)d.Attribute("index"), out var i) ? i : 0).DefaultIfEmpty(-1).Max() + 1, fromMarkdown);
+        var builder = new Builder(indexes, defs.Select(d => int.TryParse((string?)d.Attribute("index"), out var i) ? i : 0).DefaultIfEmpty(-1).Max() + 1, fromMarkdown, loadImage);
 
         var outline = new XElement(One + "Outline");
         var children = new XElement(One + "OEChildren");
@@ -91,6 +93,17 @@ public static partial class HtmlToOneNote
         }
 
         page.Add(outline);
+
+        var shown = body.QuerySelectorAll("img").Count(img => !Ancestors(img).Any(a => NonContent.Contains(a.LocalName)));
+        return (builder.Embedded, shown - builder.Embedded);
+    }
+
+    private static IEnumerable<IElement> Ancestors(IElement e)
+    {
+        for (var parent = e.ParentElement; parent is not null; parent = parent.ParentElement)
+        {
+            yield return parent;
+        }
     }
 
     private static bool IsInline(INode n) => n is IText || (n is IElement e && Inline.Contains(e.LocalName));
@@ -165,8 +178,11 @@ public static partial class HtmlToOneNote
     /// <param name="indexes">The page's QuickStyleDef indexes by name</param>
     /// <param name="nextIndex">The first free QuickStyleDef index</param>
     /// <param name="fromMarkdown">Turn <c>\|</c> in table code back into a pipe</param>
-    private sealed class Builder(Dictionary<string, int> indexes, int nextIndex, bool fromMarkdown)
+    /// <param name="loadImage">Returns an image's bytes from its <c>src</c>, or null to keep it a link</param>
+    private sealed class Builder(Dictionary<string, int> indexes, int nextIndex, bool fromMarkdown, Func<string, byte[]?>? loadImage)
     {
+        public int Embedded { get; private set; }
+
         private bool _inQuote;
         private bool _inTable;
 
@@ -193,7 +209,8 @@ public static partial class HtmlToOneNote
 
         /// <param name="number">For a numbered item, its number and format (<c>##.</c> or <c>##)</c>)</param>
         /// <remarks>numberSequence picks the number style (0 is 1, 2, 3; 1 is I, II, III), so it's always 0.</remarks>
-        private static XElement Oe(XElement parent, string innerHtml, int? style = null, string? listKind = null, (int Value, string Format) number = default)
+        /// <param name="content">An image, in place of the text</param>
+        private static XElement Oe(XElement parent, string innerHtml, int? style = null, string? listKind = null, (int Value, string Format) number = default, XElement? content = null)
         {
             var oe = new XElement(One + "OE");
             if (style is not null)
@@ -208,9 +225,22 @@ public static partial class HtmlToOneNote
                     : new XElement(One + "Bullet", new XAttribute("bullet", "2"))));
             }
 
-            oe.Add(new XElement(One + "T", new XCData(innerHtml.Trim())));
+            oe.Add(content ?? new XElement(One + "T", new XCData(innerHtml.Trim())));
             parent.Add(oe);
             return oe;
+        }
+
+        /// <summary>The OneNote image for an <c>img</c> whose file loads. Null for anything else, which stays a link.</summary>
+        private XElement? EmbeddedImage(INode n)
+        {
+            if (n is not IElement { LocalName: "img" } img || loadImage?.Invoke(img.GetAttribute("src") ?? "") is not { } data
+                || Images.ForOneNote(data) is not { } image)
+            {
+                return null;
+            }
+
+            Embedded++;
+            return new XElement(One + "Image", new XAttribute("format", image.Format), new XElement(One + "Data", Convert.ToBase64String(image.Data)));
         }
 
         /// <summary>
@@ -233,6 +263,14 @@ public static partial class HtmlToOneNote
 
             foreach (var n in nodes)
             {
+                // OneNote holds an image as its own OE, so it ends the text before it
+                if (EmbeddedImage(n) is { } image)
+                {
+                    Flush();
+                    Oe(parent, "", content: image);
+                    continue;
+                }
+
                 if (IsInline(n))
                 {
                     run.Add(n);
@@ -351,26 +389,41 @@ public static partial class HtmlToOneNote
 
             foreach (var li in list.Children.Where(c => c.LocalName == "li"))
             {
-                var inline = li.ChildNodes.Where(IsInline).ToList();
-                var nested = li.ChildNodes.Where(c => !IsInline(c)).ToList();
+                ListItem(li, parent, list.LocalName, (number++, format));
+            }
+        }
 
-                // Loose lists wrap the item text in <p>: use the first paragraph as the item text.
-                if (string.IsNullOrWhiteSpace(InlineHtml(inline)) && nested.FirstOrDefault() is IElement { LocalName: "p" } p)
-                {
-                    inline = [.. p.ChildNodes];
-                    nested.RemoveAt(0);
-                }
+        /// <remarks>
+        /// - An item that's only an image holds the image in place of text. Other images in the item text go below it.
+        /// </remarks>
+        private void ListItem(IElement li, XElement parent, string listKind, (int Value, string Format) number)
+        {
+            var inline = li.ChildNodes.Where(IsInline).ToList();
+            var nested = li.ChildNodes.Where(c => !IsInline(c)).ToList();
 
-                var oe = Oe(parent, InlineHtml(inline), style: _inQuote ? StyleIndex("blockquote") : null, listKind: list.LocalName, number: (number++, format));
-                if (nested.Count > 0)
-                {
-                    var children = new XElement(One + "OEChildren");
-                    Blocks(nested, children);
-                    if (children.HasElements)
-                    {
-                        oe.Add(children);
-                    }
-                }
+            // Loose lists wrap the item text in <p>: use the first paragraph as the item text.
+            if (string.IsNullOrWhiteSpace(InlineHtml(inline)) && nested.FirstOrDefault() is IElement { LocalName: "p" } p)
+            {
+                inline = [.. p.ChildNodes];
+                nested.RemoveAt(0);
+            }
+
+            var images = inline.Select(n => (Node: n, Image: EmbeddedImage(n))).Where(x => x.Image is not null).ToList();
+            inline = [.. inline.Except(images.Select(x => x.Node))];
+            var imageOnly = images.Count > 0 && string.IsNullOrWhiteSpace(InlineHtml(inline));
+            var oe = Oe(parent, InlineHtml(inline), style: _inQuote ? StyleIndex("blockquote") : null, listKind: listKind, number: number,
+                content: imageOnly ? images[0].Image : null);
+
+            var children = new XElement(One + "OEChildren");
+            foreach (var (_, image) in images.Skip(imageOnly ? 1 : 0))
+            {
+                Oe(children, "", content: image);
+            }
+
+            Blocks(nested, children);
+            if (children.HasElements)
+            {
+                oe.Add(children);
             }
         }
 

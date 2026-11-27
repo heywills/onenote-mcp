@@ -37,6 +37,49 @@ public class HtmlToOneNoteTests
         Assert.Equal(["Hi", "<a href=\"https://x.test\">Share</a>"], Texts(page));
     }
 
+    private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    private static (XElement Page, (int Embedded, int Linked) Images) ConvertWithImages(string html)
+    {
+        var page = new XElement(One + "Page", new XElement(One + "Title"));
+        var images = HtmlToOneNote.AddToPage(page, html, loadImage: src => src.StartsWith("missing") ? null : Png);
+        return (page, images);
+    }
+
+    // What each OE holds, in order: its text, or "image"
+    private static List<string> Content(XElement page) => page.Descendants(One + "OE")
+        .Select(oe => oe.Element(One + "Image") is not null ? "image" : (string?)oe.Element(One + "T") ?? "").ToList();
+
+    [Fact]
+    public void EmbedsImagesOnTheirOwnLine()
+    {
+        var (page, images) = ConvertWithImages("<p>before <img src=\"a.png\"> after</p><p><img src=\"missing.png\" alt=\"gone\"></p>");
+
+        Assert.Equal(["before", "image", "after", "<a href=\"missing.png\">gone</a>"], Content(page));
+        Assert.Equal((1, 1), images);
+        var image = page.Descendants(One + "Image").Single();
+        Assert.Equal("png", (string?)image.Attribute("format"));
+        Assert.Equal(System.Convert.ToBase64String(Png), (string?)image.Element(One + "Data"));
+    }
+
+    [Fact]
+    public void EmbedsImagesInListItems()
+    {
+        var (page, images) = ConvertWithImages("<ul><li><img src=\"a.png\"></li><li>text <img src=\"b.png\"></li></ul>");
+
+        var items = page.Descendants(One + "OEChildren").First().Elements(One + "OE").ToList();
+        Assert.NotNull(items[0].Element(One + "List"));
+        Assert.NotNull(items[0].Element(One + "Image"));
+        Assert.Null(items[0].Element(One + "T"));
+        Assert.Equal("text", (string?)items[1].Element(One + "T"));
+        Assert.NotNull(items[1].Element(One + "OEChildren")!.Element(One + "OE")!.Element(One + "Image"));
+        Assert.Equal((2, 0), images);
+    }
+
+    [Fact]
+    public void CountsOnlyShownImages() =>
+        Assert.Equal((0, 1), ConvertWithImages("<noscript><img src=\"a.png\"></noscript><p><a href=\"x\"><img src=\"b.png\"></a></p>").Images);
+
     [Fact]
     public void KeepsInlineFormattingAndSpaces()
     {

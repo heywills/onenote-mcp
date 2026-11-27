@@ -22,6 +22,31 @@ public static class Images
         _ => "application/octet-stream",
     };
 
+    /// <summary>The image as OneNote stores it: PNG or JPEG as is, other bitmaps as PNG.</summary>
+    /// <returns>Null for data that isn't an image OneNote can hold, such as WebP or a vector format</returns>
+    public static (byte[] Data, string Format)? ForOneNote(byte[] data)
+    {
+        switch (MimeType(data))
+        {
+            case "image/png":
+                return (data, "png");
+            case "image/jpeg":
+                return (data, "jpg");
+            case "image/gif" or "image/bmp" or "image/tiff":
+                try
+                {
+                    using var source = Image.FromStream(new MemoryStream(data));
+                    return (ResizeToPng(source, source.Width, source.Height), "png");
+                }
+                catch (Exception e) when (e is ArgumentException or ExternalException or OutOfMemoryException)
+                {
+                    return null;
+                }
+            default:
+                return null;
+        }
+    }
+
     /// <summary>The file extension for the image's type, without the dot</summary>
     public static string Extension(ReadOnlySpan<byte> data) => MimeType(data) switch
     {

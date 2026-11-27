@@ -78,6 +78,42 @@ public static partial class PageFiles
         return string.IsNullOrWhiteSpace(text) ? throw new McpException($"\"{path}\" is empty") : text;
     }
 
+    /// <summary>Reads a local image that a page's Markdown or HTML names.</summary>
+    /// <param name="baseFolder">The folder relative paths resolve against: the input file's. Null for inline content, which needs absolute paths.</param>
+    /// <returns>Null for a web or data URL, a missing or unsafe path, or a file that can't be read, so the image stays a link</returns>
+    public static byte[]? ReadImage(string src, string? baseFolder)
+    {
+        string path;
+        if (Uri.TryCreate(src, UriKind.Absolute, out var uri))
+        {
+            if (!uri.IsFile)
+            {
+                return null;
+            }
+
+            path = uri.LocalPath;
+        }
+        else if (baseFolder is not null)
+        {
+            // Saved pages percent-encode their image links
+            path = Path.Combine(baseFolder, Uri.UnescapeDataString(src).Replace('/', '\\'));
+        }
+        else
+        {
+            return null;
+        }
+
+        try
+        {
+            Check(path, "image path");
+            return File.ReadAllBytes(path);
+        }
+        catch (Exception e) when (e is McpException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Writes UTF-8 without a byte-order mark, creating missing folders.</summary>
     /// <returns>The full path written</returns>
     public static string Write(string path, string content) => Write(path, full => File.WriteAllText(full, content));

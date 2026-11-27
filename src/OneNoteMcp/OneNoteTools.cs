@@ -19,6 +19,12 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         Or return it with inline=true, where images are listed as [Image N] with callback IDs for onenote_get_image.
         """;
 
+    private const string ImagesDescription = """
+
+        Local PNG, JPEG, GIF, BMP, and TIFF images are embedded. Relative paths resolve against inputPath's folder; inline content needs absolute paths.
+        Web URLs and missing or other files stay links. The result counts both.
+        """;
+
     private const string InlineDescription = "Return the content in the response instead of saving a file. Don't pass outputPath with it.";
 
     private static readonly JsonSerializerOptions Json = new()
@@ -266,17 +272,17 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         [Description("""
             Optional HTML for the page body.
             Block: <p>, <div>, <br>, <h1>-<h6>, <ul>/<ol>/<li> (nested OK), <table>/<tr>/<th>/<td>, <pre>, <blockquote>, <hr>.
-            Inline: <b>, <i>, <u>, <s>, <sup>, <sub>, <code>, <a href>, <img> (becomes a link).
-            """)] string contentHtml = "",
+            Inline: <b>, <i>, <u>, <s>, <sup>, <sub>, <code>, <a href>, <img>.
+            """ + ImagesDescription)] string contentHtml = "",
         [Description("Absolute path of an HTML file for the page body, instead of contentHtml")] string inputPath = "") =>
-        CreatePageFromHtml(sectionId, title, Input(contentHtml, inputPath, nameof(contentHtml)));
+        CreatePageFromHtml(sectionId, title, Input(contentHtml, inputPath, nameof(contentHtml)), ImageFolder(inputPath));
 
     [McpServerTool(Name = "onenote_create_page_from_markdown", Destructive = false)]
     [Description("""
         Create a new page in a section from Markdown.
-        Supports headings, paragraphs, nested bullet and numbered lists, pipe tables, fenced code, blockquotes, rules, bold, italic, strikethrough, inline code, and links.
-        Images become links. onenote_get_page reads the page back as Markdown.
-        """)]
+        Supports headings, paragraphs, nested bullet and numbered lists, pipe tables, fenced code, blockquotes, rules, bold, italic, strikethrough, inline code, links, and images.
+        onenote_get_page reads the page back as Markdown, and a page it saved comes back with its images.
+        """ + ImagesDescription)]
     public string CreatePageFromMarkdown(
         [Description("The section ID")] string sectionId,
         [Description("Page content as Markdown. Required unless inputPath is given.")] string markdown = "",
@@ -295,7 +301,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
             title = heading ?? throw new McpException("No title: pass a title or start the Markdown with a \"# \" heading");
         }
 
-        return CreatePageFromHtml(sectionId, title, MarkdownToOneNote.ToHtml(markdown), fromMarkdown: true);
+        return CreatePageFromHtml(sectionId, title, MarkdownToOneNote.ToHtml(markdown), ImageFolder(inputPath), fromMarkdown: true);
     }
 
     [McpServerTool(Name = "onenote_delete_page", Destructive = true, Idempotent = false)]
@@ -373,9 +379,15 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     private static string Output(string content, string outputPath, bool inline, string pageId) =>
         inline ? content : ToJson(new { Status = "saved", Path = PageFiles.Write(outputPath, content), PageId = pageId });
 
-    private string CreatePageFromHtml(string sectionId, string title, string contentHtml, bool fromMarkdown = false)
+    /// <summary>The folder relative image paths resolve against: the input file's, or null for inline content.</summary>
+    private static string? ImageFolder(string inputPath) =>
+        string.IsNullOrWhiteSpace(inputPath) ? null : Path.GetDirectoryName(Path.GetFullPath(inputPath));
+
+    /// <param name="imageFolder">The folder relative image paths resolve against. Null for inline content.</param>
+    private string CreatePageFromHtml(string sectionId, string title, string contentHtml, string? imageFolder, bool fromMarkdown = false)
     {
         var pageId = oneNote.CreateNewPage(sectionId);
+        var images = (Embedded: 0, Linked: 0);
         try
         {
             var page = XElement.Parse(oneNote.GetPageContent(pageId));
@@ -383,7 +395,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
             titleText?.ReplaceNodes(new XCData(System.Net.WebUtility.HtmlEncode(title)));
             if (!string.IsNullOrWhiteSpace(contentHtml))
             {
-                HtmlToOneNote.AddToPage(page, contentHtml, fromMarkdown);
+                images = HtmlToOneNote.AddToPage(page, contentHtml, fromMarkdown, src => PageFiles.ReadImage(src, imageFolder));
             }
 
             oneNote.UpdatePageContent(page.ToString(SaveOptions.DisableFormatting));
@@ -395,7 +407,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
             throw;
         }
 
-        return ToJson(new { Status = "created", PageId = pageId, Title = title });
+        return ToJson(new { Status = "created", PageId = pageId, Title = title, Images = images.Embedded, LinkedImages = images.Linked });
     }
 
     private string SearchIn(string query, string notebookId)

@@ -118,6 +118,46 @@ public class OutputTests
     public void RejectsEmptyFiles() =>
         WithFile(new UTF8Encoding(false), " \n", path => Assert.Contains("is empty", Assert.Throws<McpException>(() => PageFiles.Read(path)).Message));
 
+    [Fact]
+    public void ReadsLocalImages()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+        var image = Path.Combine(folder, "Sprint #4_images", "image-1.png");
+        PageFiles.Write(image, [1, 2, 3]);
+        try
+        {
+            Assert.Equal([1, 2, 3], PageFiles.ReadImage("Sprint%20%234_images/image-1.png", folder));
+            Assert.Equal([1, 2, 3], PageFiles.ReadImage(image, null));
+            Assert.Equal([1, 2, 3], PageFiles.ReadImage(new Uri(image).AbsoluteUri, null));
+
+            // Inline content has no folder for relative paths
+            Assert.Null(PageFiles.ReadImage("Sprint%20%234_images/image-1.png", null));
+            Assert.Null(PageFiles.ReadImage("https://x.test/a.png", folder));
+            Assert.Null(PageFiles.ReadImage("data:image/png;base64,AAAA", folder));
+            Assert.Null(PageFiles.ReadImage("missing.png", folder));
+            Assert.Null(PageFiles.ReadImage("CON", folder));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ConvertsImagesForOneNote()
+    {
+        using var bitmap = new System.Drawing.Bitmap(2, 2);
+        using var gif = new MemoryStream();
+        bitmap.Save(gif, System.Drawing.Imaging.ImageFormat.Gif);
+
+        var converted = Images.ForOneNote(gif.ToArray());
+        Assert.Equal("png", converted?.Format);
+        Assert.Equal("image/png", Images.MimeType(converted!.Value.Data));
+        Assert.Equal("jpg", Images.ForOneNote([0xFF, 0xD8, 0xFF, 0xE0])?.Format);
+        Assert.Null(Images.ForOneNote("RIFF\0\0\0\0WEBP"u8.ToArray()));
+        Assert.Null(Images.ForOneNote([0x47, 0x49, 0x46, 0x38, 0x00]));
+    }
+
     private static void WithFile(Encoding encoding, string text, Action<string> test, bool bom = false)
     {
         var path = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}.md");
