@@ -64,7 +64,7 @@ public static partial class PageMarkdown
     /// Strips the inline HTML OneNote keeps inside text elements.
     /// </summary>
     public static string CleanText(string text) =>
-        System.Net.WebUtility.HtmlDecode(Tags().Replace(text, "")).Replace(' ', ' ');
+        System.Net.WebUtility.HtmlDecode(Tags().Replace(text, "")).Replace('\u00A0', ' ');
 
     private sealed class Writer(Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle)
     {
@@ -126,29 +126,8 @@ public static partial class PageMarkdown
             }
 
             var quote = quoteColumn is not null;
-            var prefix = quoteColumn is null ? indent : quoteColumn + "> " + indent[quoteColumn.Length..];
-            var list = oe.Element(One + "List");
-
-            if (list is not null)
-            {
-                // A new item ends the deeper lists, so their alternate markers no longer apply
-                _altIndents.RemoveWhere(i => i.Length > indent.Length);
-
-                // A top-level switch between bullets and numbers already starts a new list
-                if (_kind == "list" && prefix is "" or "> " && (list.Element(One + "Bullet") is not null) != _topLevelBullet)
-                {
-                    _altIndents.Remove("");
-                }
-            }
-
-            // OneNote's number text can be a letter or roman numeral ("a.", "iv."): Markdown takes digits only.
-            var alt = _altIndents.Contains(indent);
-            var numberText = (string?)list?.Element(One + "Number")?.Attribute("text");
-            var marker = list?.Element(One + "Number") is not null
-                ? (numberText is not null && NumberMarker().Match(numberText) is { Success: true } digits ? digits.Groups[1].Value : $"{number}") + (alt ? ") " : ". ")
-                : list is not null ? (alt ? "* " : "- ") : null;
-
-            var html = OeHtml(oe);
+            var prefix = QuotePrefix(quoteColumn, indent);
+            var marker = Marker(oe.Element(One + "List"), indent, prefix, number);
             var hasText = oe.Element(One + "T") is not null && oe != repeatedTitle;
 
             // A list item with no text, such as a bullet holding only an image, still gets its marker line.
@@ -159,40 +138,94 @@ public static partial class PageMarkdown
                 ListItem(prefix, marker!, "", quote);
             }
 
-            if (hasText && styleName == "code" && marker is null)
+            if (hasText)
             {
-                CodeLine(indent, Parser.ParseDocument($"<body>{html}</body>").Body!.TextContent.Replace(' ', ' '));
-            }
-            else if (hasText)
-            {
-                var heading = Regex.Match(styleName, "^h([1-6])$");
-
-                // OneNote copies an italic style's italic onto the text, such as its own Quote, h4, and h6.
-                var text = InlineMarkdown(html, (string?)oe.Attribute("style") ?? "", ignoreUniformItalic: styleItalic).Trim();
-                if (marker is not null)
-                {
-                    ListItem(prefix, marker, EscapeLineStart(text), quote);
-                }
-                else if (text.Length == 0)
-                {
-                    Blank(indent, prefix, quote);
-                }
-                else if (heading.Success)
-                {
-                    Paragraph(indent, $"{new string('#', int.Parse(heading.Groups[1].Value))} {EscapeClosingHashes(text)}", false);
-                }
-                else
-                {
-                    Paragraph(prefix, HorizontalRule().IsMatch(text) ? "---" : EscapeLineStart(text), quote);
-                }
+                Text(oe, (styleName, styleItalic), indent, prefix, marker, quote);
             }
 
-            var childPrefix = quoteColumn is null ? childIndent : quoteColumn + "> " + childIndent[quoteColumn.Length..];
+            Children(oe, childIndent, quoteColumn);
+
+            // A truly empty item: what follows isn't its content
+            if (listItem && _lines.Count > 0 && _lines[^1] == (prefix + marker).TrimEnd())
+            {
+                _bareMarker = false;
+            }
+        }
+
+        /// <summary>The indent, with <c>"> "</c> at the quote's column when quoted</summary>
+        private static string QuotePrefix(string? quoteColumn, string indent) =>
+            quoteColumn is null ? indent : quoteColumn + "> " + indent[quoteColumn.Length..];
+
+        /// <summary>The list marker, such as <c>"- "</c> or <c>"2. "</c>. Null when the OE isn't a list item.</summary>
+        private string? Marker(XElement? list, string indent, string prefix, int number)
+        {
+            if (list is null)
+            {
+                return null;
+            }
+
+            // A new item ends the deeper lists, so their alternate markers no longer apply
+            _altIndents.RemoveWhere(i => i.Length > indent.Length);
+
+            // A top-level switch between bullets and numbers already starts a new list
+            if (_kind == "list" && prefix is "" or "> " && (list.Element(One + "Bullet") is not null) != _topLevelBullet)
+            {
+                _altIndents.Remove("");
+            }
+
+            var alt = _altIndents.Contains(indent);
+            if (list.Element(One + "Number") is not { } numbered)
+            {
+                return alt ? "* " : "- ";
+            }
+
+            // OneNote's number text can be a letter or roman numeral ("a.", "iv."): Markdown takes digits only.
+            var numberText = (string?)numbered.Attribute("text");
+            var digits = numberText is not null && NumberMarker().Match(numberText) is { Success: true } match ? match.Groups[1].Value : $"{number}";
+            return digits + (alt ? ") " : ". ");
+        }
+
+        private void Text(XElement oe, (string Name, bool Italic) style, string indent, string prefix, string? marker, bool quote)
+        {
+            var html = OeHtml(oe);
+            if (style.Name == "code" && marker is null)
+            {
+                CodeLine(indent, Parser.ParseDocument($"<body>{html}</body>").Body!.TextContent.Replace('\u00A0', ' '));
+                return;
+            }
+
+            // OneNote copies an italic style's italic onto the text, such as its own Quote, h4, and h6.
+            var text = InlineMarkdown(html, (string?)oe.Attribute("style") ?? "", ignoreUniformItalic: style.Italic).Trim();
+            var heading = Regex.Match(style.Name, "^h([1-6])$");
+            if (marker is not null)
+            {
+                ListItem(prefix, marker, EscapeLineStart(text), quote);
+            }
+            else if (text.Length == 0)
+            {
+                Blank(indent, prefix, quote);
+            }
+            else if (heading.Success)
+            {
+                Paragraph(indent, $"{new string('#', int.Parse(heading.Groups[1].Value))} {EscapeClosingHashes(text)}", false);
+            }
+            else
+            {
+                Paragraph(prefix, HorizontalRule().IsMatch(text) ? "---" : EscapeLineStart(text), quote);
+            }
+        }
+
+        /// <remarks>
+        /// - Only list items indent their content. Indented text elsewhere would read as code.
+        /// </remarks>
+        private void Children(XElement oe, string childIndent, string? quoteColumn)
+        {
+            var quote = quoteColumn is not null;
+            var childPrefix = QuotePrefix(quoteColumn, childIndent);
             foreach (var child in oe.Elements())
             {
                 switch (child.Name.LocalName)
                 {
-                    // Only list items indent their content. Indented text elsewhere would read as code.
                     case "Image":
                         Image(child, childPrefix, quote);
                         break;
@@ -206,12 +239,6 @@ public static partial class PageMarkdown
                         Block(child, childIndent, quoteColumn);
                         break;
                 }
-            }
-
-            // A truly empty item: what follows isn't its content
-            if (listItem && _lines.Count > 0 && _lines[^1] == (prefix + marker).TrimEnd())
-            {
-                _bareMarker = false;
             }
         }
 
@@ -244,7 +271,7 @@ public static partial class PageMarkdown
                 // A code-style line (from <pre>) is inline code: a cell holds one line.
                 var text = string.Join(" ", cell.Descendants(One + "OE").Where(oe => oe.Element(One + "T") is not null).Select(oe =>
                     styles.GetValueOrDefault((string?)oe.Attribute("quickStyleIndex") ?? "").Name == "code"
-                        ? CodeSpan(Parser.ParseDocument($"<body>{OeHtml(oe)}</body>").Body!.TextContent.Replace(' ', ' '))
+                        ? CodeSpan(Parser.ParseDocument($"<body>{OeHtml(oe)}</body>").Body!.TextContent.Replace('\u00A0', ' '))
                         : InlineMarkdown(OeHtml(oe), (string?)oe.Attribute("style") ?? "", ignoreUniformBold: r == 0).Trim()));
                 return Whitespace().Replace(text, " ").Trim().Replace("|", "\\|");
             }).ToList()).ToList();
@@ -463,95 +490,116 @@ public static partial class PageMarkdown
         var list = nodes.ToList();
         for (var i = 0; i < list.Count; i++)
         {
-            var node = list[i];
-            if (node is IText t)
+            if (list[i] is IText t)
             {
-                var text = t.Data.Replace(' ', ' ');
-                if (!inCode)
-                {
-                    text = Whitespace().Replace(text, " ");
-                    text = inLink ? LinkTextSpecial().Replace(text, @"\$0") : Escape(text);
-                }
+                sb.Append(TextMarkdown(t.Data, inCode, inLink));
+            }
+            else if (list[i] is IElement)
+            {
+                var run = TakeRun(list, ref i, inCode);
 
-                sb.Append(text);
-                continue;
-            }
+                // Markers right after another run's closing marker merge with it ("*foo***.bar**"), so use HTML there
+                var afterMarker = sb.Length > 0 && sb[^1] is '*' or '~' && (sb.Length < 2 || sb[^2] != '\\');
 
-            if (node is not IElement e)
-            {
-                continue;
-            }
-
-            // Neighbors with the same formatting wrap once: **foobar**, not **foo****bar**.
-            // OneNote splits runs where only the color or font changes, so compare formatting, not the whole style.
-            var run = new List<IElement> { e };
-            // Code runs always merge, or `a``b` would read as one span holding a double backtick.
-            while (e.LocalName is not ("a" or "br" or "img") && i + 1 < list.Count && list[i + 1] is IElement next
-                && next.LocalName is not ("a" or "br" or "img")
-                && (Formatting(next) == Formatting(e) || Formatting(next).Code && Formatting(e).Code && !inCode))
-            {
-                run.Add(next);
-                i++;
-            }
-
-            var style = StyleOf(e.GetAttribute("style") ?? "");
-            var tag = e.LocalName;
-            var code = inCode || style.Code || tag == "code";
-            var before = sb.Length > 0 ? sb[^1] : outerBefore;
-
-            // Markers right after another run's closing marker merge with it ("*foo***.bar**"), so use HTML there
-            var afterMarker = sb.Length > 0 && sb[^1] is '*' or '~' && (sb.Length < 2 || sb[^2] != '\\');
-
-            // The next character, past any empty elements
-            var after = NextChar(list.Skip(i + 1), outerAfter);
-
-            var strike = style.Strike || tag is "s" or "del" or "strike";
-            var italic = (style.Italic || tag is "i" or "em") && !ignore.Italic;
-            var bold = (style.Bold || tag is "b" or "strong") && !ignore.Bold;
-            strike &= !ignore.Strike;
-            var inner = Inline(run.SelectMany(r => r.ChildNodes), code, (ignore.Bold || bold, ignore.Italic || italic, ignore.Strike || strike), inLink || tag == "a", before, after);
-
-            if (tag == "br")
-            {
-                sb.Append(' ');
-            }
-            else if (tag == "a" && inCode)
-            {
-                sb.Append(inner); // a code span can't hold a link: keep the text
-            }
-            else if (tag == "a" && e.GetAttribute("href") is { } href && e.TextContent.Trim() == href && AutolinkUrl().IsMatch(href))
-            {
-                sb.Append($"<{href}>"); // OneNote links bare URLs. An autolink needs no escaping.
-            }
-            else if (tag == "a" && string.IsNullOrEmpty(e.GetAttribute("href")))
-            {
-                sb.Append(inner); // an anchor, not a link
-            }
-            else if (tag == "a")
-            {
-                // A monospace link: [`text`](url)
-                var text = code ? CodeSpan(inner.Trim()) : inner.Trim();
-                sb.Append($"[{text}]({LinkDestination(e.GetAttribute("href") ?? "")})");
-            }
-            else if (code && !inCode)
-            {
-                // Merged code runs keep formatting they all share: **`x`**
-                var formats = run.Select(Formatting).ToList();
-                var codeMarkdown = run.Any(HasLink) ? CodeWithLinks(run.SelectMany(r => r.ChildNodes)) : CodeSpan(inner);
-                sb.Append(Emphasize(codeMarkdown, formats.All(f => f.Strike) && !ignore.Strike,
-                    formats.All(f => f.Italic) && !ignore.Italic, formats.All(f => f.Bold) && !ignore.Bold, before, after, afterMarker));
-            }
-            else if (code)
-            {
-                sb.Append(inner);
-            }
-            else
-            {
-                sb.Append(Emphasize(inner, strike, italic, bold, before, after, afterMarker));
+                // The next character, past any empty elements
+                var neighbors = (Before: sb.Length > 0 ? sb[^1] : outerBefore, After: NextChar(list.Skip(i + 1), outerAfter), afterMarker);
+                sb.Append(RunMarkdown(run, inCode, ignore, inLink, neighbors));
             }
         }
 
         return sb.ToString();
+    }
+
+    private static string TextMarkdown(string data, bool inCode, bool inLink)
+    {
+        var text = data.Replace('\u00A0', ' ');
+        if (inCode)
+        {
+            return text;
+        }
+
+        text = Whitespace().Replace(text, " ");
+        return inLink ? LinkTextSpecial().Replace(text, @"\$0") : Escape(text);
+    }
+
+    /// <summary>
+    /// The element at <paramref name="i"/> and its neighbors with the same formatting. Moves <paramref name="i"/> to the last one.
+    /// </summary>
+    /// <remarks>
+    /// - Neighbors with the same formatting wrap once: **foobar**, not **foo****bar**.
+    /// - OneNote splits runs where only the color or font changes, so compare formatting, not the whole style.
+    /// - Code runs always merge, or `a``b` would read as one span holding a double backtick.
+    /// </remarks>
+    private static List<IElement> TakeRun(List<INode> list, ref int i, bool inCode)
+    {
+        var e = (IElement)list[i];
+        var run = new List<IElement> { e };
+        while (e.LocalName is not ("a" or "br" or "img") && i + 1 < list.Count && list[i + 1] is IElement next
+            && next.LocalName is not ("a" or "br" or "img")
+            && (Formatting(next) == Formatting(e) || Formatting(next).Code && Formatting(e).Code && !inCode))
+        {
+            run.Add(next);
+            i++;
+        }
+
+        return run;
+    }
+
+    /// <param name="neighbors">The characters around the run, and whether it follows another run's closing marker</param>
+    private static string RunMarkdown(List<IElement> run, bool inCode, (bool Bold, bool Italic, bool Strike) ignore, bool inLink, (char Before, char After, bool AfterMarker) neighbors)
+    {
+        var e = run[0];
+        var style = StyleOf(e.GetAttribute("style") ?? "");
+        var tag = e.LocalName;
+        var code = inCode || style.Code || tag == "code";
+        var strike = (style.Strike || tag is "s" or "del" or "strike") && !ignore.Strike;
+        var italic = (style.Italic || tag is "i" or "em") && !ignore.Italic;
+        var bold = (style.Bold || tag is "b" or "strong") && !ignore.Bold;
+        var inner = Inline(run.SelectMany(r => r.ChildNodes), code, (ignore.Bold || bold, ignore.Italic || italic, ignore.Strike || strike), inLink || tag == "a", neighbors.Before, neighbors.After);
+
+        if (tag == "br")
+        {
+            return " ";
+        }
+
+        if (tag == "a")
+        {
+            return LinkMarkdown(e, inner, code, inCode);
+        }
+
+        if (code && !inCode)
+        {
+            // Merged code runs keep formatting they all share: **`x`**
+            var formats = run.Select(Formatting).ToList();
+            var codeMarkdown = run.Any(HasLink) ? CodeWithLinks(run.SelectMany(r => r.ChildNodes)) : CodeSpan(inner);
+            return Emphasize(codeMarkdown, formats.All(f => f.Strike) && !ignore.Strike, formats.All(f => f.Italic) && !ignore.Italic,
+                formats.All(f => f.Bold) && !ignore.Bold, neighbors.Before, neighbors.After, neighbors.AfterMarker);
+        }
+
+        return code ? inner : Emphasize(inner, strike, italic, bold, neighbors.Before, neighbors.After, neighbors.AfterMarker);
+    }
+
+    private static string LinkMarkdown(IElement a, string inner, bool code, bool inCode)
+    {
+        var href = a.GetAttribute("href");
+        if (inCode)
+        {
+            return inner; // a code span can't hold a link: keep the text
+        }
+
+        if (href is not null && a.TextContent.Trim() == href && AutolinkUrl().IsMatch(href))
+        {
+            return $"<{href}>"; // OneNote links bare URLs. An autolink needs no escaping.
+        }
+
+        if (string.IsNullOrEmpty(href))
+        {
+            return inner; // an anchor, not a link
+        }
+
+        // A monospace link: [`text`](url)
+        var text = code ? CodeSpan(inner.Trim()) : inner.Trim();
+        return $"[{text}]({LinkDestination(href)})";
     }
 
     private static bool HasLink(IElement e) => e.QuerySelector("a[href]") is not null;
@@ -577,7 +625,7 @@ public static partial class PageMarkdown
                 if (node is IElement { LocalName: "a" } a && !string.IsNullOrEmpty(a.GetAttribute("href")))
                 {
                     Flush();
-                    sb.Append($"[{CodeSpan(a.TextContent.Replace(' ', ' ').Trim())}]({LinkDestination(a.GetAttribute("href")!)})");
+                    sb.Append($"[{CodeSpan(a.TextContent.Replace('\u00A0', ' ').Trim())}]({LinkDestination(a.GetAttribute("href")!)})");
                 }
                 else if (node is IElement element && HasLink(element))
                 {
@@ -585,7 +633,7 @@ public static partial class PageMarkdown
                 }
                 else
                 {
-                    code.Append(node is IElement { LocalName: "br" } ? " " : node.TextContent.Replace(' ', ' '));
+                    code.Append(node is IElement { LocalName: "br" } ? " " : node.TextContent.Replace('\u00A0', ' '));
                 }
             }
         }
