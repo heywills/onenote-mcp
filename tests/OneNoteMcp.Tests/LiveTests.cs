@@ -194,7 +194,16 @@ public class LiveTests
 
         var pageId = JsonDocument.Parse(_tools.CreatePageFromMarkdown(sectionId, "# Live delete test (in Deleted Pages)\n\nx"))
             .RootElement.GetProperty("page_id").GetString()!;
-        Assert.Contains("moved to Deleted Pages", _tools.DeletePage(pageId));
+        try
+        {
+            Assert.Contains("moved to Deleted Pages", _tools.DeletePage(pageId));
+        }
+        catch
+        {
+            _client.DeleteHierarchy(pageId, permanently: true);
+            throw;
+        }
+
         Assert.DoesNotContain(pageId, _tools.ListPages(sectionId));
 
         var deleted = System.Xml.Linq.XElement.Parse(_client.GetHierarchy("", Microsoft.Office.Interop.OneNote.HierarchyScope.hsPages))

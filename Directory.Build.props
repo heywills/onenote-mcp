@@ -1,0 +1,19 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- Installed with OneNote desktop. Its managed wrapper class works from 64-bit .NET. -->
+    <OneNoteInteropPath>$(WINDIR)\assembly\GAC_MSIL\Microsoft.Office.Interop.OneNote\15.0.0.0__71e9bce111e9429c\Microsoft.Office.Interop.OneNote.dll</OneNoteInteropPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.Office.Interop.OneNote">
+      <HintPath>$(OneNoteInteropPath)</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CheckOneNoteInterop" BeforeTargets="ResolveAssemblyReferences" Condition="!Exists('$(OneNoteInteropPath)')">
+    <Error Text="OneNote interop assembly not found at $(OneNoteInteropPath). Install OneNote desktop (Microsoft 365)." />
+  </Target>
+
+</Project>

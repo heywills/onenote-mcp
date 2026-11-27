@@ -19,11 +19,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\OneNoteMcp\OneNoteMcp.csproj" />
-    <Reference Include="Microsoft.Office.Interop.OneNote">
-      <HintPath>$(WINDIR)\assembly\GAC_MSIL\Microsoft.Office.Interop.OneNote\15.0.0.0__71e9bce111e9429c\Microsoft.Office.Interop.OneNote.dll</HintPath>
-      <EmbedInteropTypes>false</EmbedInteropTypes>
-    </Reference>
-  </ItemGroup>
+    <ProjectReference Include="..\..\src\OneNoteMcp\OneNoteMcp.csproj" />  </ItemGroup>
 
 </Project>

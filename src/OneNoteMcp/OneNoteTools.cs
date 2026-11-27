@@ -224,7 +224,8 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         }
 
         oneNote.DeleteHierarchy(pageId);
-        return ToJson(new { Status = "moved to Deleted Pages", PageId = pageId, Title = (string?)page.Attribute("name") });
+        // No page ID: the page gets a new one in Deleted Pages
+        return ToJson(new { Status = "moved to Deleted Pages", Title = (string?)page.Attribute("name") });
     }
 
     // Helpers
