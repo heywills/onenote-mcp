@@ -14,6 +14,11 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
 {
     private const int DefaultMaxImageKb = 512;
     private const string OutputPathDescription = "Absolute path of the file to save, such as C:\\work\\page.md. Overwrites it. Required unless inline is true.";
+    private const string GetPageDescription = """
+        Save a page as Markdown to outputPath, with its images in a folder next to it, linked from the Markdown: page.md gets page_images.
+        Or return it with inline=true, where images are listed as [Image N] with callback IDs for onenote_get_image.
+        """;
+
     private const string InlineDescription = "Return the content in the response instead of saving a file. Don't pass outputPath with it.";
 
     private static readonly JsonSerializerOptions Json = new()
@@ -64,14 +69,64 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     // Content
 
     [McpServerTool(Name = "onenote_get_page", ReadOnly = false, Destructive = true)]
-    [Description("Save a page as Markdown to outputPath, or return it with inline=true. Images are listed as [Image N] with callback IDs for onenote_get_image.")]
+    [Description(GetPageDescription)]
     public string GetPage(
         [Description("The page ID, from onenote_list_pages or a search")] string pageId,
         [Description(OutputPathDescription)] string outputPath = "",
         [Description(InlineDescription)] bool inline = false)
     {
-        CheckOutput(outputPath, inline);
-        return Output(PageText(pageId), outputPath, inline, pageId);
+        CheckPageOutput(outputPath, inline);
+        return inline ? PageText(pageId) : SavePage(pageId, outputPath);
+    }
+
+    /// <summary>Saves the page as Markdown, with its images in a folder next to it: <c>page.md</c> gets <c>page_images</c>.</summary>
+    /// <remarks>
+    /// - An image that can't be saved stays as text with the reason, such as <c>[Image N: OneNote hasn't downloaded this image yet…]</c>, so one image doesn't fail the save.
+    /// - Images are saved full size. Saving again overwrites them.
+    /// </remarks>
+    private string SavePage(string pageId, string outputPath)
+    {
+        var xml = oneNote.GetPageContent(pageId);
+        var (_, images) = PageMarkdown.Convert(xml);
+        var folder = Path.GetFileNameWithoutExtension(outputPath) + "_images";
+        var saved = images.ToDictionary(img => img.CallbackId, img => SaveImage(pageId, img, outputPath, folder));
+        var (markdown, _) = PageMarkdown.Convert(xml, img => saved[img.CallbackId].Markdown);
+
+        return ToJson(new
+        {
+            Status = "saved",
+            Path = PageFiles.Write(outputPath, markdown),
+            PageId = pageId,
+            Images = saved.Values.Count(s => s.Saved),
+            MissingImages = saved.Values.Count(s => !s.Saved),
+        });
+    }
+
+    /// <summary>Saves one image to the page's image folder.</summary>
+    /// <returns>The image's Markdown, and whether its file was saved</returns>
+    private (string Markdown, bool Saved) SaveImage(string pageId, ImageRef img, string outputPath, string folder)
+    {
+        byte[] data;
+        try
+        {
+            data = oneNote.GetBinaryPageContent(pageId, img.CallbackId);
+        }
+        catch (McpException e)
+        {
+            return (PageMarkdown.ImageProblem(img.Index, e.Message), false);
+        }
+
+        var extension = Images.Extension(data);
+        try
+        {
+            PageFiles.Write(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outputPath))!, folder, $"image-{img.Index}.{extension}"), data);
+        }
+        catch (McpException e)
+        {
+            return (PageMarkdown.ImageProblem(img.Index, e.Message), false);
+        }
+
+        return (PageMarkdown.ImageLink(img.Index, folder, extension), true);
     }
 
     private string PageText(string pageId)
@@ -94,16 +149,16 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     [Description("""
         Get a page as Markdown from its OneNote "Copy link to page" link.
         Accepts the onenote: link, the https://.../_layouts/Doc.aspx web link, or both pasted together.
-        The notebook must be open in OneNote desktop. Saves to outputPath, or returns it with inline=true. Either way, the result has the page ID for follow-up calls.
+        The notebook must be open in OneNote desktop. Saves to outputPath with its images, like onenote_get_page, or returns it with inline=true. Either way, the result has the page ID for follow-up calls.
         """)]
     public string GetPageByLink(
         [Description("The link, or both links, from \"Copy link to page\"")] string link,
         [Description(OutputPathDescription)] string outputPath = "",
         [Description(InlineDescription)] bool inline = false)
     {
-        CheckOutput(outputPath, inline);
+        CheckPageOutput(outputPath, inline);
         var pageId = FindPageByLink(link);
-        return inline ? $"page_id: `{pageId}`\n\n{PageText(pageId)}" : Output(PageText(pageId), outputPath, inline, pageId);
+        return inline ? $"page_id: `{pageId}`\n\n{PageText(pageId)}" : SavePage(pageId, outputPath);
     }
 
     private string FindPageByLink(string link)
@@ -186,7 +241,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     [Description("Get one image by its callback ID, so you can see it.")]
     public ContentBlock GetImage(
         [Description("The page ID")] string pageId,
-        [Description("The image's callback ID, from onenote_get_page")] string callbackId,
+        [Description("The image's callback ID, from onenote_get_page with inline=true, or onenote_get_page_images")] string callbackId,
         [Description("Maximum size in KB. Larger images are shrunk.")] int maxSizeKb = DefaultMaxImageKb) =>
         Image(pageId, callbackId, maxSizeKb);
 
@@ -286,6 +341,16 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         }
 
         PageFiles.Check(outputPath, nameof(outputPath));
+    }
+
+    /// <summary>Checks the output options of a Markdown tool, whose image folder takes its name from the file.</summary>
+    private static void CheckPageOutput(string outputPath, bool inline)
+    {
+        CheckOutput(outputPath, inline);
+        if (!inline && Path.GetFileNameWithoutExtension(outputPath).Length == 0)
+        {
+            throw new McpException($"outputPath needs a name before the extension, such as page.md, not \"{Path.GetFileName(outputPath)}\"");
+        }
     }
 
     /// <summary>The content, or the text of <paramref name="inputPath"/> when one is given.</summary>

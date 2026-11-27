@@ -142,6 +142,41 @@ public class MarkdownTests
     }
 
     [Fact]
+    public void WritesImagesAsTheCallerAsks()
+    {
+        var xml = $"""<one:Page xmlns:one="{Ns}" name="P"><one:Title/><one:Outline><one:OEChildren><one:OE><one:Image><one:CallbackID callbackID="cb"/></one:Image></one:OE></one:OEChildren></one:Outline></one:Page>""";
+        Assert.Equal("# P\n\n![Image 1](My%20page_images/image-1.png)", PageMarkdown.Convert(xml, img => $"![Image {img.Index}](My%20page_images/image-{img.Index}.png)").Markdown);
+    }
+
+    [Theory]
+    [InlineData("page_images", "png", "![Image 2](page_images/image-2.png)")]
+    [InlineData("Sprint #4_images", "png", "![Image 2](Sprint%20%234_images/image-2.png)")]
+    [InlineData("50% (draft)_images", "jpg", "![Image 2](50%25%20%28draft%29_images/image-2.jpg)")]
+    [InlineData("Café_images", "png", "![Image 2](Caf%C3%A9_images/image-2.png)")]
+    [InlineData("page_images", "bin", "[Image 2: unsupported type](page_images/image-2.bin)")]
+    public void LinksSavedImages(string folder, string extension, string markdown) =>
+        Assert.Equal(markdown, PageMarkdown.ImageLink(2, folder, extension));
+
+    [Theory]
+    [InlineData("OneNote hasn't downloaded this image yet.", "[Image 3: OneNote hasn't downloaded this image yet.]")]
+    [InlineData("Can't save \"C:\\a\\b\":\nAccess denied]", "[Image 3: Can't save \"C:\\\\a\\\\b\": Access denied)]")]
+    [InlineData("bad *markup* and `code`", "[Image 3: bad \\*markup\\* and \\`code\\`]")]
+    public void DescribesImagesItCouldntSave(string reason, string markdown) =>
+        Assert.Equal(markdown, PageMarkdown.ImageProblem(3, reason));
+
+    [Theory]
+    [InlineData(new byte[] { 0x89, 0x50, 0x4E, 0x47 }, "png")]
+    [InlineData(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }, "jpg")]
+    [InlineData(new byte[] { 0x49, 0x49, 0x2A, 0x00 }, "tif")]
+    [InlineData(new byte[] { 0x00, 0x01 }, "bin")]
+    public void PicksImageExtensions(byte[] data, string extension) =>
+        Assert.Equal(extension, Images.Extension(data));
+
+    [Fact]
+    public void ReportsImagesItCantShrink() =>
+        Assert.Contains("Can't shrink", Assert.Throws<ModelContextProtocol.McpException>(() => Images.FitToSize(new byte[2048], 1)).Message);
+
+    [Fact]
     public void RepeatsThePlaceholderForAnImageShownAgain() =>
         Assert.Equal("# P\n\n[Image 1]\n\nbetween\n\n[Image 1]", Read(
             "<one:OE><one:Image><one:CallbackID callbackID=\"cb\"/></one:Image></one:OE><one:OE><one:T>between</one:T></one:OE><one:OE><one:Image><one:CallbackID callbackID=\"cb\"/></one:Image></one:OE>"));

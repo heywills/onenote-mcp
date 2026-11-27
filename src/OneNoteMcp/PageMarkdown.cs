@@ -23,7 +23,8 @@ public static partial class PageMarkdown
 {
     private static readonly HtmlParser Parser = new();
 
-    public static (string Markdown, IReadOnlyList<ImageRef> Images) Convert(string xml)
+    /// <param name="imageMarkdown">The Markdown for each image. Default: <c>[Image N]</c>.</param>
+    public static (string Markdown, IReadOnlyList<ImageRef> Images) Convert(string xml, Func<ImageRef, string>? imageMarkdown = null)
     {
         var root = XElement.Parse(xml);
         var title = (string?)root.Attribute("name") ?? (string?)root.Attribute("ID") ?? "Untitled";
@@ -41,7 +42,7 @@ public static partial class PageMarkdown
             repeatedTitle = null;
         }
 
-        var writer = new Writer(styles, repeatedTitle);
+        var writer = new Writer(styles, repeatedTitle, imageMarkdown ?? (img => $"[Image {img.Index}]"));
         foreach (var outline in root.Descendants(One + "Outline"))
         {
             writer.NewOutline();
@@ -60,13 +61,28 @@ public static partial class PageMarkdown
         return ($"# {EscapeClosingHashes(Escape(title))}\n\n{writer}".Trim(), writer.Images);
     }
 
+    /// <summary>Markdown for an image saved as <c>image-N.extension</c> in <paramref name="folder"/>, next to the page file.</summary>
+    /// <remarks>
+    /// - The folder is percent-encoded, so a page name with <c>#</c>, <c>%</c>, or spaces still links.
+    /// - A type viewers can't show (<c>bin</c>) is a plain link, not an embed.
+    /// </remarks>
+    public static string ImageLink(int index, string folder, string extension)
+    {
+        var link = $"{Uri.EscapeDataString(folder)}/image-{index}.{extension}";
+        return extension == "bin" ? $"[Image {index}: unsupported type]({link})" : $"![Image {index}]({link})";
+    }
+
+    /// <summary>Markdown for an image that couldn't be saved, with the reason as plain text on one line.</summary>
+    public static string ImageProblem(int index, string reason) =>
+        $"[Image {index}: {Escape(Whitespace().Replace(reason, " ").Trim().Replace(']', ')'))}]";
+
     /// <summary>
     /// Strips the inline HTML OneNote keeps inside text elements.
     /// </summary>
     public static string CleanText(string text) =>
         System.Net.WebUtility.HtmlDecode(Tags().Replace(text, "")).Replace('\u00A0', ' ');
 
-    private sealed class Writer(Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle)
+    private sealed class Writer(Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle, Func<ImageRef, string> imageMarkdown)
     {
         private readonly List<string> _lines = [];
         private string _kind = "";
@@ -261,7 +277,7 @@ public static partial class PageMarkdown
                 Images.Add(reference);
             }
 
-            Paragraph(prefix, $"[Image {reference.Index}]", quote);
+            Paragraph(prefix, imageMarkdown(reference), quote);
         }
 
         private void Table(XElement table, string indent)

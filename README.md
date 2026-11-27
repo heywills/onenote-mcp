@@ -12,7 +12,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_list_sections` | Sections in a notebook, including section groups |
 | `onenote_list_pages` | Pages in a section |
 | `onenote_get_notebook_tree` | Notebooks, groups, sections, and page titles |
-| `onenote_get_page` | Page as Markdown: headings, nested lists, tables, code blocks, inline formatting, and image callback IDs |
+| `onenote_get_page` | Page as Markdown: headings, nested lists, tables, code blocks, inline formatting, and images |
 | `onenote_get_page_by_link` | Page from a "Copy link to page" link (`onenote:` or web link) |
 | `onenote_get_page_raw` | Page as OneNote XML |
 | `onenote_get_page_images` | Images on a page |
@@ -23,7 +23,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown. |
 | `onenote_delete_page` | Moves a page to Deleted Pages. Subpages stay. |
 
-`onenote_get_page`, `onenote_get_page_by_link`, and `onenote_get_page_raw` save to `outputPath`, an absolute file path the agent names, and return the path. `inline=true` returns the page in the response instead.
+`onenote_get_page`, `onenote_get_page_by_link`, and `onenote_get_page_raw` save to `outputPath`, an absolute file path the agent names, and return the path. The Markdown tools save images full size to a folder next to the page and link them: `page.md` gets `page_images`. `inline=true` returns the page in the response instead, with `[Image N]` and callback IDs for the image tools.
 
 `onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path.
 
@@ -47,7 +47,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 ## Notes
 
 - Search uses Windows Search, so it finds indexed pages only.
-- Images OneNote hasn't downloaded yet return an error. Open the page in OneNote desktop, then retry.
+- Images OneNote hasn't downloaded yet return an error from the image tools, and show as `[Image N: reason]` in saved pages. Open the page in OneNote desktop, then retry.
 - Markdown that OneNote can't hold:
   - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
   - Numbered lists start at 1. OneNote numbers lists itself, so separate lists alternate between `1.` and `1)` in OneNote to restart.

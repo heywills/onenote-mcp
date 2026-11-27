@@ -307,6 +307,59 @@ public class LiveTests
         Assert.InRange(image.DecodedData.Length, 1, 64 * 1024);
     }
 
+    [LiveFact]
+    public void SavesImagesNextToThePage()
+    {
+        var link = Environment.GetEnvironmentVariable("ONENOTE_LIVE_IMAGE_LINK");
+        if (string.IsNullOrEmpty(link))
+        {
+            return; // optional
+        }
+
+        var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+        try
+        {
+            // '#' and spaces in the name: the link must still resolve
+            var page = Path.Combine(folder, "Sprint #4.md");
+            var saved = JsonDocument.Parse(_tools.GetPageByLink(link, page)).RootElement;
+            Assert.True(saved.GetProperty("images").GetInt32() > 0);
+
+            var markdown = File.ReadAllText(page);
+            Assert.Contains("![Image 1](Sprint%20%234_images/image-1.", markdown);
+            Assert.DoesNotContain("Image References", markdown);
+
+            var image = Assert.Single(Directory.GetFiles(Path.Combine(folder, "Sprint #4_images"), "image-1.*"));
+            Assert.StartsWith("image/", Images.MimeType(File.ReadAllBytes(image)));
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+    }
+
+    [LiveFact]
+    public void SavesNoImageFolderForPagesWithoutImages() =>
+        WithPage("# Live no-images test (deleting now)\n\nBody", pageId =>
+        {
+            var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+            try
+            {
+                var saved = JsonDocument.Parse(_tools.GetPage(pageId, Path.Combine(folder, "page.md"))).RootElement;
+                Assert.Equal(0, saved.GetProperty("images").GetInt32());
+                Assert.False(Directory.Exists(Path.Combine(folder, "page_images")));
+            }
+            finally
+            {
+                if (Directory.Exists(folder))
+                {
+                    Directory.Delete(folder, recursive: true);
+                }
+            }
+        });
+
     private void WithPage(string markdown, Action<string> test) => WithCreated(_tools.CreatePageFromMarkdown(SectionId(), markdown), test);
 
     /// <param name="created">A create tool's result</param>

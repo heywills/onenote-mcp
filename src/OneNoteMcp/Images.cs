@@ -1,6 +1,8 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+using ModelContextProtocol;
 
 namespace OneNoteMcp;
 
@@ -20,6 +22,15 @@ public static class Images
         _ => "application/octet-stream",
     };
 
+    /// <summary>The file extension for the image's type, without the dot</summary>
+    public static string Extension(ReadOnlySpan<byte> data) => MimeType(data) switch
+    {
+        "image/jpeg" => "jpg",
+        "image/tiff" => "tif",
+        "application/octet-stream" => "bin",
+        var mime => mime["image/".Length..],
+    };
+
     /// <summary>
     /// Returns the image as is when it fits in <paramref name="maxKb"/>, or a smaller PNG.
     /// </summary>
@@ -31,6 +42,19 @@ public static class Images
             return (data, mime);
         }
 
+        // GDI+ can't read every type OneNote stores, such as some vector formats
+        try
+        {
+            return (ShrinkToPng(data, maxKb), "image/png");
+        }
+        catch (Exception e) when (e is ArgumentException or ExternalException or OutOfMemoryException)
+        {
+            throw new McpException($"Can't shrink this {mime} image below {maxKb} KB: {e.Message}", e);
+        }
+    }
+
+    private static byte[] ShrinkToPng(byte[] data, int maxKb)
+    {
         using var source = Image.FromStream(new MemoryStream(data));
         foreach (var scale in new[] { 0.75, 0.5, 0.35, 0.25, 0.15 })
         {
@@ -43,13 +67,13 @@ public static class Images
             var png = ResizeToPng(source, w, h);
             if (png.Length <= maxKb * 1024)
             {
-                return (png, "image/png");
+                return png;
             }
         }
 
         // Last resort: 400 px thumbnail
         var ratio = Math.Min(1.0, Math.Min(400.0 / source.Width, 400.0 / source.Height));
-        return (ResizeToPng(source, Math.Max(1, (int)(source.Width * ratio)), Math.Max(1, (int)(source.Height * ratio))), "image/png");
+        return ResizeToPng(source, Math.Max(1, (int)(source.Width * ratio)), Math.Max(1, (int)(source.Height * ratio)));
     }
 
     private static byte[] ResizeToPng(Image source, int width, int height)
