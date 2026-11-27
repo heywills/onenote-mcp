@@ -1,87 +1,54 @@
-# OneNote MCP Server
+# OneNote MCP server
 
-A Model Context Protocol (MCP) server that gives Claude (or any MCP client) direct access to local Microsoft OneNote notebooks via the COM API. No Azure registration, no API keys, no cloud auth — just your local OneNote desktop app.
+MCP server that reads, searches, and creates pages in every notebook open in OneNote desktop, including SharePoint and OneDrive notebooks. It drives the desktop app through COM, so it uses the app's own sign-in: no Entra app, no API keys.
 
-**Windows only.** Requires OneNote desktop installed and running.
-
-## Features
-
-- **13 tools** for full OneNote access
-- Navigate notebooks, sections, section groups, and pages
-- Read pages as clean markdown with image references
-- Full-text search across all notebooks (via Windows Search)
-- Extract embedded images as native MCP Image objects (Claude can see them directly)
-- Optional vision analysis of images via any OpenAI-compatible vision API (LM Studio, ollama, etc.)
-- Create new pages with HTML content
+Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT) and ported from Python to .NET.
 
 ## Tools
 
-| Category | Tool | Description |
-|----------|------|-------------|
-| Navigation | `onenote_list_notebooks` | List all open notebooks |
-| | `onenote_list_sections` | List sections in a notebook |
-| | `onenote_list_pages` | List pages in a section |
-| | `onenote_get_notebook_tree` | Full hierarchy tree |
-| Content | `onenote_get_page` | Page as clean markdown |
-| | `onenote_get_page_raw` | Raw OneNote XML |
-| | `onenote_get_page_images` | All images as MCP Image objects |
-| | `onenote_get_image` | Single image by callback ID |
-| Search | `onenote_search` | Full-text search (all notebooks) |
-| | `onenote_search_in_notebook` | Search within one notebook |
-| Vision | `onenote_analyze_page_visuals` | Vision model analysis of all page images |
-| | `onenote_describe_image` | Vision model analysis of one image |
-| Write | `onenote_create_page` | Create a new page |
-
-## Installation
-
-```bash
-pip install -r requirements.txt
-```
-
-Dependencies: `mcp[cli]`, `pydantic-settings`, `Pillow`, `httpx`
-
-## Configuration
-
-Add to your Claude Code MCP config (`~/.claude/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "onenote": {
-      "type": "stdio",
-      "command": "python",
-      "args": ["path/to/onenote-mcp/onenote_mcp.py"],
-      "env": {}
-    }
-  }
-}
-```
-
-### Vision (Optional)
-
-To enable image analysis via a local vision model (e.g., LM Studio):
-
-```json
-"env": {
-  "ONENOTE_VISION_URL": "http://localhost:1234",
-  "ONENOTE_VISION_MODEL": "your-vision-model-name",
-  "ONENOTE_VISION_FALLBACK_URL": "http://other-host:1234",
-  "ONENOTE_VISION_FALLBACK_MODEL": "fallback-model-name"
-}
-```
-
-Any OpenAI-compatible `/v1/chat/completions` endpoint with vision support works.
-
-## How It Works
-
-64-bit Python can't call 32-bit OneNote COM objects directly. This server bridges the gap by shelling out to PowerShell for every COM operation, which handles the COM interop natively. Results are passed back via temp files to avoid stdout encoding issues.
+| Tool | Purpose |
+|---|---|
+| `onenote_list_notebooks` | Open notebooks |
+| `onenote_list_sections` | Sections in a notebook, including section groups |
+| `onenote_list_pages` | Pages in a section |
+| `onenote_get_notebook_tree` | Notebooks, groups, sections, and page titles |
+| `onenote_get_page` | Page as Markdown, with image callback IDs |
+| `onenote_get_page_by_link` | Page from a "Copy link to page" link (`onenote:` or web link) |
+| `onenote_get_page_raw` | Page as OneNote XML |
+| `onenote_get_page_images` | Images on a page |
+| `onenote_get_image` | One image by callback ID |
+| `onenote_search` | Search all notebooks |
+| `onenote_search_in_notebook` | Search one notebook |
+| `onenote_create_page` | New page from HTML: headings, nested lists, tables, code |
 
 ## Requirements
 
-- Windows 10/11
-- Microsoft OneNote desktop (not the UWP/Store version)
-- Python 3.11+
-- OneNote must be running (or at least installed — COM will launch it)
+- Windows with OneNote desktop (Microsoft 365), not the Store version. COM starts OneNote if it's closed.
+- .NET 10 SDK
+
+## Setup
+
+1. Build:
+   ```powershell
+   dotnet publish src/OneNoteMcp -c Release -o publish
+   ```
+2. Register at user scope:
+   ```powershell
+   claude mcp add onenote --scope user -- "C:/path/to/onenote-mcp/publish/OneNoteMcp.exe"
+   ```
+3. Restart Claude Code and ask: `Use the onenote MCP server to list my notebooks.`
+
+## Notes
+
+- Search uses Windows Search, so it finds indexed pages only.
+- Images OneNote hasn't downloaded yet return an error. Open the page in OneNote desktop, then retry.
+- `onenote_get_page` drops heading levels and bullet markers.
+
+## How it works
+
+- Calls OneNote through `Application2Class` in OneNote's interop assembly, which Office installs. Late binding fails in 64-bit .NET because OneNote registers its type library for 32-bit only.
+- The build references that assembly from the GAC, so it builds only where OneNote desktop is installed.
+- COM errors come back as tool errors with OneNote's error name and code.
 
 ## License
 

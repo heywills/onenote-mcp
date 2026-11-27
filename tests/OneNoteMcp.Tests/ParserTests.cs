@@ -1,0 +1,148 @@
+namespace OneNoteMcp.Tests;
+
+public class ParserTests
+{
+    private const string Ns = "http://schemas.microsoft.com/office/onenote/2013/onenote";
+
+    private const string HierarchyXml = $"""
+        <one:Notebooks xmlns:one="{Ns}">
+          <one:Notebook name="Work Notes" ID="nb-001" path="C:\Users\test\Work Notes" lastModifiedTime="2026-02-15T10:00:00Z">
+            <one:Section name="Meeting Notes" ID="sec-001" path="C:\Users\test\Work Notes\Meeting Notes.one">
+              <one:Page ID="page-001" name="Monday Standup" lastModifiedTime="2026-02-14T09:00:00Z" pageLevel="0"/>
+              <one:Page ID="page-002" name="Sprint Review" lastModifiedTime="2026-02-13T14:00:00Z" pageLevel="2"/>
+            </one:Section>
+            <one:SectionGroup name="Archive" ID="sg-001">
+              <one:Section name="Old Notes" ID="sec-002">
+                <one:Page ID="page-003" name="Archived Page" pageLevel="0"/>
+              </one:Section>
+            </one:SectionGroup>
+            <one:SectionGroup name="Recycle Bin" ID="sg-bin" isRecycleBin="true">
+              <one:Section name="Deleted" ID="sec-deleted"/>
+            </one:SectionGroup>
+          </one:Notebook>
+          <one:Notebook name="Personal" ID="nb-002" path="C:\Users\test\Personal">
+            <one:Section name="Journal" ID="sec-003">
+              <one:Page ID="page-004" name="Feb 10" pageLevel="0"/>
+            </one:Section>
+          </one:Notebook>
+        </one:Notebooks>
+        """;
+
+    private const string PageXml = $"""
+        <one:Page xmlns:one="{Ns}" ID="page-001" name="Test Page">
+          <one:Title><one:OE><one:T><![CDATA[Test Page]]></one:T></one:OE></one:Title>
+          <one:Outline>
+            <one:OEChildren>
+              <one:OE><one:T><![CDATA[This is paragraph one.]]></one:T></one:OE>
+              <one:OE><one:T><![CDATA[This is paragraph two with <b>bold</b> text &amp; more.]]></one:T></one:OE>
+              <one:OE>
+                <one:Image>
+                  <one:Size width="640" height="480" isSetByUser="true"/>
+                  <one:CallbackID callbackID="img-001"/>
+                </one:Image>
+              </one:OE>
+              <one:OE><one:T><![CDATA[Text after image.]]></one:T></one:OE>
+            </one:OEChildren>
+          </one:Outline>
+          <one:Outline>
+            <one:OEChildren>
+              <one:OE>
+                <one:Table>
+                  <one:Row>
+                    <one:Cell><one:OEChildren><one:OE><one:T><![CDATA[Header 1]]></one:T></one:OE></one:OEChildren></one:Cell>
+                    <one:Cell><one:OEChildren><one:OE><one:T><![CDATA[Header 2]]></one:T></one:OE></one:OEChildren></one:Cell>
+                  </one:Row>
+                  <one:Row>
+                    <one:Cell><one:OEChildren>
+                      <one:OE><one:T><![CDATA[Data 1]]></one:T></one:OE>
+                      <one:OE><one:T><![CDATA[second line]]></one:T></one:OE>
+                    </one:OEChildren></one:Cell>
+                    <one:Cell><one:OEChildren><one:OE><one:T><![CDATA[Data 2]]></one:T></one:OE></one:OEChildren></one:Cell>
+                  </one:Row>
+                </one:Table>
+              </one:OE>
+            </one:OEChildren>
+          </one:Outline>
+        </one:Page>
+        """;
+
+    [Fact]
+    public void ParsesNotebooksSectionsAndPages()
+    {
+        var notebooks = Hierarchy.ParseNotebooks(HierarchyXml);
+
+        Assert.Equal(["Work Notes", "Personal"], notebooks.Select(n => n.Name));
+        var work = notebooks[0];
+        Assert.Equal("nb-001", work.Id);
+        Assert.Equal(["Monday Standup", "Sprint Review"], work.Sections.Single().Pages.Select(p => p.Name));
+        Assert.Equal(2, work.Sections[0].Pages[1].Level);
+    }
+
+    [Fact]
+    public void SkipsRecycleBinAndKeepsNestedGroups()
+    {
+        var group = Hierarchy.ParseNotebooks(HierarchyXml)[0].SectionGroups.Single();
+
+        Assert.Equal("Archive", group.Name);
+        Assert.Equal("Archived Page", group.Sections.Single().Pages.Single().Name);
+    }
+
+    [Theory]
+    [InlineData("""<one:Notebook xmlns:one="{0}" ID="nb" name="N"><one:Section ID="s" name="S"/></one:Notebook>""")]
+    [InlineData("""<one:Section xmlns:one="{0}" ID="s" name="S"/>""")]
+    [InlineData("""<one:SectionGroup xmlns:one="{0}" ID="g" name="G"><one:Section ID="s" name="S"/></one:SectionGroup>""")]
+    public void ParsesScopedResults(string template)
+    {
+        var notebooks = Hierarchy.ParseNotebooks(string.Format(template, Ns));
+
+        var notebook = Assert.Single(notebooks);
+        Assert.Contains(notebook.Sections.Concat(notebook.SectionGroups.SelectMany(g => g.Sections)), s => s.Id == "s");
+    }
+
+    [Fact]
+    public void ConvertsPageTextAndStripsInlineHtml()
+    {
+        var (md, _) = PageMarkdown.Convert(PageXml);
+
+        Assert.StartsWith("# Test Page", md);
+        Assert.Contains("This is paragraph one.", md);
+        Assert.Contains("This is paragraph two with bold text & more.", md);
+        Assert.Contains("Text after image.", md);
+    }
+
+    [Fact]
+    public void ListsImages()
+    {
+        var (md, images) = PageMarkdown.Convert(PageXml);
+
+        var image = Assert.Single(images);
+        Assert.Equal(("img-001", 640.0, 480.0), (image.CallbackId, image.Width!.Value, image.Height!.Value));
+        Assert.Contains("[Image 1]", md);
+    }
+
+    [Fact]
+    public void ConvertsTableOnceWithCellLinesJoined()
+    {
+        var (md, _) = PageMarkdown.Convert(PageXml);
+
+        Assert.Contains("| Header 1 | Header 2 |\n| --- | --- |\n| Data 1 second line | Data 2 |", md);
+        Assert.Single(md.Split('\n'), l => l.Contains("Data 2"));
+    }
+
+    [Fact]
+    public void ParsesSearchResults()
+    {
+        var result = Assert.Single(Hierarchy.ParseSearchResults($"""
+            <one:Notebooks xmlns:one="{Ns}">
+              <one:Notebook name="Work Notes" ID="nb-001">
+                <one:SectionGroup name="G" ID="g"><one:Section name="Meeting Notes" ID="sec-001">
+                  <one:Page ID="page-001" name="Monday Standup" lastModifiedTime="2026-02-14T09:00:00Z"/>
+                </one:Section></one:SectionGroup>
+              </one:Notebook>
+            </one:Notebooks>
+            """));
+
+        Assert.Equal(("Monday Standup", "Work Notes", "Meeting Notes"), (result.PageName, result.Notebook, result.Section));
+        Assert.Empty(Hierarchy.ParseSearchResults($"""<one:Notebooks xmlns:one="{Ns}"/>"""));
+    }
+}

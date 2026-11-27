@@ -1,7 +1,6 @@
-__pycache__/
-*.pyc
-.pytest_cache/
-*.egg-info/
-dist/
-build/
-.venv/
+bin/
+obj/
+.vs/
+*.user
+TestResults/
+publish/
