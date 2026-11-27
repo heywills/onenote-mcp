@@ -207,7 +207,28 @@ public class HtmlToOneNoteTests
 
     [Fact]
     public void DropsScriptLinks() =>
-        Assert.Equal(["x pic"], Texts(Convert("<p><a href=\"java&#9;script:alert(1)\">x</a> <img src=\"JavaScript:y\" alt=\"pic\"></p>")));
+        Assert.Equal(["x pic d"], Texts(Convert("<p><a href=\"java&#9;script:alert(1)\">x</a> <img src=\"JavaScript:y\" alt=\"pic\"> <a href=\"data:text/html,x\">d</a></p>")));
+
+    [Fact]
+    public void KeepsAppLinks() =>
+        Assert.Equal(["<a href=\"tel:+15551234\">Call</a> <a href=\"msteams:/l/chat\">Chat</a>"],
+            Texts(Convert("<p><a href=\"tel:+15551234\">Call</a> <a href=\"msteams:/l/chat\">Chat</a></p>")));
+
+    [Fact]
+    public void WritesImagesWithoutASourceAsText() =>
+        Assert.Equal(["Image 1"], Texts(Convert("<p><img data-callback-id=\"cb\" alt=\"Image 1\"></p>")));
+
+    [Fact]
+    public void KeepsTheInnerParagraphsAlignment() =>
+        Assert.Equal("center", (string?)Convert("<div style=\"text-align:left\"><p style=\"text-align:center\">C</p></div>").Descendants(One + "OE").Single().Attribute("alignment"));
+
+    [Fact]
+    public void MakesRowHeadersBoldText()
+    {
+        var page = Convert("<table><tr><th>Name</th><td>Ann</td></tr></table>");
+        Assert.Null(page.Descendants(One + "Table").Single().Attribute("hasHeaderRow"));
+        Assert.Equal(["<b>Name</b>", "Ann"], Texts(page));
+    }
 
     [Fact]
     public void KeepsOnlyColorFunctions() =>

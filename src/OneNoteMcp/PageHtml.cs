@@ -91,7 +91,8 @@ public static class PageHtml
             {
                 var kind = Kind(oes[i]);
                 var end = i + 1;
-                while (kind is not null && end < oes.Count && Kind(oes[end]) == kind)
+                // A code line with content under it ends the code block, which then shows that content
+                while (kind is not null && end < oes.Count && Kind(oes[end]) == kind && !(kind == "pre" && HasContent(oes[end - 1])))
                 {
                     end++;
                 }
@@ -111,6 +112,9 @@ public static class PageHtml
                 "code" => "pre",
                 _ => null,
             };
+
+        private static bool HasContent(XElement oe) =>
+            oe.Elements().Any(c => c.Name.LocalName is "Image" or "Table" or "InsertedFile" or "OEChildren");
 
         private string StyleName(XElement oe) =>
             styles.TryGetValue((string?)oe.Attribute("quickStyleIndex") ?? "", out var s) ? s.Name : "";
@@ -137,7 +141,9 @@ public static class PageHtml
                     break;
                 case "pre":
                     var lines = oes.Select(oe => Encode(PageMarkdown.CleanText(string.Concat(oe.Elements(One + "T").Select(t => t.Value)))));
-                    _html.Append($"<pre>{string.Join("\n", lines)}</pre>\n");
+                    // The parser drops the first newline after <pre>, so this one keeps a leading blank line
+                    _html.Append($"<pre>\n{string.Join("\n", lines)}</pre>\n");
+                    Content(oes[^1], indent: true);
                     break;
                 default:
                     oes.ForEach(Paragraph);
@@ -155,7 +161,9 @@ public static class PageHtml
             if (oe != repeatedTitle && oe.Element(One + "T") is not null)
             {
                 var tag = StyleName(oe) is { Length: 2 } name && name[0] == 'h' && char.IsDigit(name[1]) ? name : "p";
-                _html.Append($"<{tag}{Style(oe)}>{Text(oe)}</{tag}>\n");
+                // A browser shows an empty <p> with no height
+                var text = Text(oe) is var t && tag == "p" && string.IsNullOrWhiteSpace(t) ? "<br>" : t;
+                _html.Append($"<{tag}{Style(oe)}>{text}</{tag}>\n");
             }
 
             // The repeated title's children aren't indented under anything shown

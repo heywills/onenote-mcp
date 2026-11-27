@@ -58,7 +58,8 @@ public class PageHtmlTests
             <p>quoted</p>
             <p>more</p>
             </blockquote>
-            <pre>x &lt; 1
+            <pre>
+            x &lt; 1
               y</pre>
             <h2>Heading</h2>
 
@@ -98,6 +99,24 @@ public class PageHtmlTests
         Assert.Equal(
             "<p><b>b</b>bad <a href=\"https://x.test/?a=1&amp;b=2\">ok</a> <span style=\"color:red\">s</span>&nbsp;é</p>\n",
             Body("""<one:OE><one:T><![CDATA[<b>b</b><script>x()</script><a href="java&#9;script:alert(1)">bad</a> <a href="https://x.test/?a=1&b=2" onclick="x()">ok</a> <span style="color:red;position:fixed" lang="en-US">s</span><img src=x onerror=y>&nbsp;é]]></one:T></one:OE>"""));
+
+    [Fact]
+    public void KeepsAppLinksAndDropsScriptLinks() =>
+        Assert.Equal("<p><a href=\"tel:+15551234\">Call</a> d</p>\n",
+            Body("""<one:OE><one:T><![CDATA[<a href="tel:+15551234">Call</a> <a href="data:text/html,x">d</a>]]></one:T></one:OE>"""));
+
+    [Fact]
+    public void ShowsContentUnderACodeLine() =>
+        Assert.Equal("<pre>\n\nx</pre>\n<p><img data-callback-id=\"cb\" alt=\"Image 1\"></p>\n<pre>\ny</pre>\n",
+            Body("""
+                <one:OE quickStyleIndex="4"><one:T></one:T></one:OE>
+                <one:OE quickStyleIndex="4"><one:T>x</one:T><one:Image><one:CallbackID callbackID="cb"/></one:Image></one:OE>
+                <one:OE quickStyleIndex="4"><one:T>y</one:T></one:OE>
+                """));
+
+    [Fact]
+    public void WritesBlankLinesThatShow() =>
+        Assert.Equal("<p>a</p>\n<p><br></p>\n<p>b</p>\n", Body("<one:OE><one:T>a</one:T></one:OE><one:OE><one:T></one:T></one:OE><one:OE><one:T>b</one:T></one:OE>"));
 
     [Fact]
     public void FiltersParagraphStylesAndShading() =>

@@ -159,8 +159,8 @@ public static partial class HtmlToOneNote
                 // Colors, highlights, fonts, and sizes, such as onenote_get_page's HTML keeps
                 "span" when Css.Inline(e.GetAttribute("style")) is { Length: > 0 } css => $"<span style=\"{WebUtility.HtmlEncode(css)}\">{inner}</span>",
 
-                // OneNote can't load an image from a URL here: keep it as a link, or its alt text inside a link or for a script link.
-                "img" when inLink || !SafeHtml.IsSafeHref(e.GetAttribute("src") ?? "") => WebUtility.HtmlEncode(alt),
+                // OneNote can't load an image from a URL here: keep it as a link, or its alt text inside a link, with no src, or for a script link.
+                "img" when inLink || e.GetAttribute("src") is not { Length: > 0 } src || !SafeHtml.IsSafeHref(src) => WebUtility.HtmlEncode(alt),
                 "img" => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("src")))}\">{WebUtility.HtmlEncode(alt)}</a>",
                 _ => inner,
             });
@@ -419,8 +419,9 @@ public static partial class HtmlToOneNote
                 oe.SetAttributeValue("style", css);
             }
 
+            // An inner paragraph's alignment wins over its container's
             var alignment = Css.Value(style, "text-align")?.ToLowerInvariant();
-            if (alignment is "center" or "right" or "left")
+            if (alignment is "center" or "right" or "left" && oe.Attribute("alignment") is null)
             {
                 oe.SetAttributeValue("alignment", alignment);
             }
@@ -545,8 +546,8 @@ public static partial class HtmlToOneNote
                 new XElement(One + "Columns", Enumerable.Range(0, columns).Select(i =>
                     new XElement(One + "Column", new XAttribute("index", i), new XAttribute("width", "120")))));
 
-            // From HTML, a th row is OneNote's own header row. Other header cells, and all from Markdown, are bold text.
-            var headerRow = !fromMarkdown && rows[0].Any(c => c.LocalName == "th");
+            // From HTML, a first row of only th is OneNote's own header row. Other header cells, and all from Markdown, are bold text.
+            var headerRow = !fromMarkdown && rows[0].Count > 0 && rows[0].All(c => c.LocalName == "th");
             if (headerRow)
             {
                 tbl.SetAttributeValue("hasHeaderRow", "true");
