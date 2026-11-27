@@ -136,11 +136,76 @@ public class OutputTests
             Assert.Null(PageFiles.ReadImage("data:image/png;base64,AAAA", folder));
             Assert.Null(PageFiles.ReadImage("missing.png", folder));
             Assert.Null(PageFiles.ReadImage("CON", folder));
+
+            // A file's images must sit inside its folder
+            var inner = Path.Combine(folder, "inner");
+            Directory.CreateDirectory(inner);
+            Assert.Null(PageFiles.ReadImage("../Sprint%20%234_images/image-1.png", inner));
+            Assert.Null(PageFiles.ReadImage("..%2FSprint%20%234_images%2Fimage-1.png", inner));
+            Assert.Null(PageFiles.ReadImage(image, inner));
+            Assert.Null(PageFiles.ReadImage(Uri.EscapeDataString(image), inner));
+            Assert.Null(PageFiles.ReadImage(new Uri(image).AbsoluteUri, inner));
         }
         finally
         {
             Directory.Delete(folder, recursive: true);
         }
+    }
+
+    // Opening any of these would connect to the host and send the user's Windows credentials
+    [Theory]
+    [InlineData(@"\\host\share\a.png")]
+    [InlineData("//host/share/a.png")]
+    [InlineData("file://host/share/a.png")]
+    [InlineData("file:////host/share/a.png")]
+    [InlineData("%5C%5Chost%5Cshare%5Ca.png")]
+    [InlineData("%2F%2Fhost%2Fshare%2Fa.png")]
+    [InlineData(@"\/host/share/a.png")]
+    public void NeverReadsNetworkPaths(string src)
+    {
+        Assert.Null(PageFiles.ReadImage(src, null));
+        Assert.Null(PageFiles.ReadImage(src, Path.GetTempPath()));
+    }
+
+    [Fact]
+    public void SkipsFilesOverTheSizeLimit()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}.png");
+        using (var file = File.Create(path))
+        {
+            file.SetLength(PageFiles.MaxImageBytes + 1);
+        }
+
+        try
+        {
+            Assert.Null(PageFiles.ReadImage(path, null));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ShrinksLargeImagesForOneNote()
+    {
+        using var bitmap = new System.Drawing.Bitmap(3000, 3000);
+        var random = new Random(1);
+        for (var x = 0; x < 3000; x += 3)
+        {
+            for (var y = 0; y < 3000; y += 3)
+            {
+                bitmap.SetPixel(x, y, System.Drawing.Color.FromArgb(random.Next(256), random.Next(256), random.Next(256)));
+            }
+        }
+
+        using var bmp = new MemoryStream();
+        bitmap.Save(bmp, System.Drawing.Imaging.ImageFormat.Bmp);
+        Assert.True(bmp.Length > Images.MaxEmbedKb * 1024);
+
+        var image = Images.ForOneNote(bmp.ToArray());
+        Assert.Equal("png", image?.Format);
+        Assert.InRange(image!.Value.Data.Length, 1, Images.MaxEmbedKb * 1024);
     }
 
     [Fact]

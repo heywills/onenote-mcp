@@ -94,16 +94,7 @@ public static partial class HtmlToOneNote
 
         page.Add(outline);
 
-        var shown = body.QuerySelectorAll("img").Count(img => !Ancestors(img).Any(a => NonContent.Contains(a.LocalName)));
-        return (builder.Embedded, shown - builder.Embedded);
-    }
-
-    private static IEnumerable<IElement> Ancestors(IElement e)
-    {
-        for (var parent = e.ParentElement; parent is not null; parent = parent.ParentElement)
-        {
-            yield return parent;
-        }
+        return (builder.Embedded, builder.Linked);
     }
 
     private static bool IsInline(INode n) => n is IText || (n is IElement e && Inline.Contains(e.LocalName));
@@ -114,7 +105,8 @@ public static partial class HtmlToOneNote
     /// <param name="inCode">Keep every space, as <c>&amp;nbsp;</c></param>
     /// <param name="inLink">Inside a link, where an image can only be its alt text</param>
     /// <param name="inTable">In a table cell, where code keeps the <c>\|</c> that Markdown needs for a pipe</param>
-    private static string InlineHtml(IEnumerable<INode> nodes, bool inCode = false, bool inLink = false, bool inTable = false)
+    /// <param name="imageLinked">Called for each image written as a link or alt text, to count them</param>
+    private static string InlineHtml(IEnumerable<INode> nodes, bool inCode = false, bool inLink = false, bool inTable = false, Action? imageLinked = null)
     {
         var sb = new StringBuilder();
         foreach (var n in nodes)
@@ -133,7 +125,12 @@ public static partial class HtmlToOneNote
                 continue;
             }
 
-            var inner = InlineHtml(e.ChildNodes, inCode || e.LocalName == "code", inLink || e.LocalName == "a", inTable);
+            var inner = InlineHtml(e.ChildNodes, inCode || e.LocalName == "code", inLink || e.LocalName == "a", inTable, imageLinked);
+            if (e.LocalName == "img")
+            {
+                imageLinked?.Invoke();
+            }
+
             var alt = e.GetAttribute("alt") is { Length: > 0 } a ? a : e.GetAttribute("src") ?? "image";
             sb.Append(e.LocalName switch
             {
@@ -182,6 +179,10 @@ public static partial class HtmlToOneNote
     private sealed class Builder(Dictionary<string, int> indexes, int nextIndex, bool fromMarkdown, Func<string, byte[]?>? loadImage)
     {
         public int Embedded { get; private set; }
+
+        public int Linked { get; private set; }
+
+        private void CountLink() => Linked++;
 
         private bool _inQuote;
         private bool _inTable;
@@ -252,7 +253,7 @@ public static partial class HtmlToOneNote
 
             void Flush()
             {
-                var text = InlineHtml(run, inTable: _inTable && fromMarkdown).Trim();
+                var text = InlineHtml(run, inTable: _inTable && fromMarkdown, imageLinked: CountLink).Trim();
                 if (text.Length > 0)
                 {
                     Oe(parent, text, style: _inQuote ? StyleIndex("blockquote") : null);
@@ -267,7 +268,7 @@ public static partial class HtmlToOneNote
                 if (EmbeddedImage(n) is { } image)
                 {
                     Flush();
-                    Oe(parent, "", content: image);
+                    Oe(parent, "", style: _inQuote ? StyleIndex("blockquote") : null, content: image);
                     continue;
                 }
 
@@ -302,7 +303,7 @@ public static partial class HtmlToOneNote
                         Oe(parent, ""); // blank line before a heading, like hand-made pages
                     }
 
-                    Oe(parent, InlineHtml(e.ChildNodes), style: StyleIndex(e.LocalName));
+                    Oe(parent, InlineHtml(e.ChildNodes, imageLinked: CountLink), style: StyleIndex(e.LocalName));
                     break;
                 case "blockquote":
                     Quote(e, parent);
@@ -411,13 +412,15 @@ public static partial class HtmlToOneNote
             var images = inline.Select(n => (Node: n, Image: EmbeddedImage(n))).Where(x => x.Image is not null).ToList();
             inline = [.. inline.Except(images.Select(x => x.Node))];
             var imageOnly = images.Count > 0 && string.IsNullOrWhiteSpace(InlineHtml(inline));
-            var oe = Oe(parent, InlineHtml(inline), style: _inQuote ? StyleIndex("blockquote") : null, listKind: listKind, number: number,
-                content: imageOnly ? images[0].Image : null);
+            var style = _inQuote ? StyleIndex("blockquote") : (int?)null;
+            var oe = imageOnly
+                ? Oe(parent, "", style: style, listKind: listKind, number: number, content: images[0].Image)
+                : Oe(parent, InlineHtml(inline, imageLinked: CountLink), style: style, listKind: listKind, number: number);
 
             var children = new XElement(One + "OEChildren");
             foreach (var (_, image) in images.Skip(imageOnly ? 1 : 0))
             {
-                Oe(children, "", content: image);
+                Oe(children, "", style: style, content: image);
             }
 
             Blocks(nested, children);
@@ -452,7 +455,7 @@ public static partial class HtmlToOneNote
                     {
                         if (row[i].LocalName == "th")
                         {
-                            Oe(cellChildren, $"<b>{InlineHtml(row[i].ChildNodes, inTable: fromMarkdown).Trim()}</b>");
+                            Oe(cellChildren, $"<b>{InlineHtml(row[i].ChildNodes, inTable: fromMarkdown, imageLinked: CountLink).Trim()}</b>");
                         }
                         else
                         {

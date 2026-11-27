@@ -81,6 +81,18 @@ public class HtmlToOneNoteTests
         Assert.Equal((0, 1), ConvertWithImages("<noscript><img src=\"a.png\"></noscript><p><a href=\"x\"><img src=\"b.png\"></a></p>").Images);
 
     [Fact]
+    public void CountsLinksAsWritten() =>
+        Assert.Equal((1, 2), ConvertWithImages("<h2>Logo <img src=\"missing-1.png\"></h2><ul><li><img src=\"a.png\"></li><li>text <img src=\"missing-2.png\"></li></ul>").Images);
+
+    [Fact]
+    public void KeepsImagesInAQuote()
+    {
+        var (page, _) = ConvertWithImages("<blockquote><p>Quoted</p><p><img src=\"a.png\"></p></blockquote>");
+        var styles = page.Descendants(One + "OE").Select(oe => (string?)oe.Attribute("quickStyleIndex")).Distinct();
+        Assert.Single(styles);
+    }
+
+    [Fact]
     public void KeepsInlineFormattingAndSpaces()
     {
         var page = Convert("<p>Text with <b>bold</b>, <code>code</code>, and a <a href=\"https://x.test/?a=1&b=2\">link</a>.</p>");

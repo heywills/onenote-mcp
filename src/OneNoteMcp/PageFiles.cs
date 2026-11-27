@@ -78,41 +78,69 @@ public static partial class PageFiles
         return string.IsNullOrWhiteSpace(text) ? throw new McpException($"\"{path}\" is empty") : text;
     }
 
+    /// <summary>Files larger than this stay links, so a page can't make the server read a huge file.</summary>
+    public const long MaxImageBytes = 50L * 1024 * 1024;
+
     /// <summary>Reads a local image that a page's Markdown or HTML names.</summary>
-    /// <param name="baseFolder">The folder relative paths resolve against: the input file's. Null for inline content, which needs absolute paths.</param>
-    /// <returns>Null for a web or data URL, a missing or unsafe path, or a file that can't be read, so the image stays a link</returns>
+    /// <param name="baseFolder">The input file's folder, or null for content the agent passed inline.</param>
+    /// <returns>Null for anything that should stay a link: a web or data URL, a disallowed or missing path, or a file that's too large or can't be read</returns>
+    /// <remarks>
+    /// - Files can come from the web, so their images must sit inside the file's folder. Only inline content may use absolute paths.
+    /// - Network paths are never read: opening one sends the user's Windows credentials to that host.
+    /// </remarks>
     public static byte[]? ReadImage(string src, string? baseFolder)
     {
-        string path;
-        if (Uri.TryCreate(src, UriKind.Absolute, out var uri))
+        try
         {
-            if (!uri.IsFile)
+            if (ImagePath(src, baseFolder) is not { } path)
             {
                 return null;
             }
 
-            path = uri.LocalPath;
-        }
-        else if (baseFolder is not null)
-        {
-            // Saved pages percent-encode their image links
-            path = Path.Combine(baseFolder, Uri.UnescapeDataString(src).Replace('/', '\\'));
-        }
-        else
-        {
-            return null;
-        }
-
-        try
-        {
             Check(path, "image path");
-            return File.ReadAllBytes(path);
+            var file = new FileInfo(path);
+            return file.Exists && file.Length <= MaxImageBytes ? File.ReadAllBytes(path) : null;
         }
-        catch (Exception e) when (e is McpException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception e) when (e is McpException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or UriFormatException)
         {
             return null;
         }
     }
+
+    /// <returns>The full path of a local image the content may embed, or null</returns>
+    private static string? ImagePath(string src, string? baseFolder)
+    {
+        // Saved pages percent-encode their image links
+        var decoded = Uri.UnescapeDataString(src);
+        if (IsNetworkPath(src) || IsNetworkPath(decoded))
+        {
+            return null;
+        }
+
+        var isAbsolute = Uri.TryCreate(src, UriKind.Absolute, out var uri);
+        if (baseFolder is null)
+        {
+            if (isAbsolute)
+            {
+                return uri!.IsFile && !uri.IsUnc ? uri.LocalPath : null;
+            }
+
+            return Path.IsPathFullyQualified(decoded) ? decoded : null;
+        }
+
+        if (isAbsolute || Path.IsPathRooted(decoded))
+        {
+            return null;
+        }
+
+        var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseFolder)) + Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(Path.Combine(folder, decoded.Replace('/', '\\')));
+        return full.StartsWith(folder, StringComparison.OrdinalIgnoreCase) && !IsNetworkPath(full) ? full : null;
+    }
+
+    /// <summary>A UNC path in any spelling, including protocol-relative URLs like <c>//host/a.png</c>.</summary>
+    private static bool IsNetworkPath(string path) =>
+        path.Length >= 2 && path[0] is '\\' or '/' && path[1] is '\\' or '/';
 
     /// <summary>Writes UTF-8 without a byte-order mark, creating missing folders.</summary>
     /// <returns>The full path written</returns>
