@@ -72,6 +72,10 @@ public static partial class PageMarkdown
         return extension == "bin" ? $"[Image {index}: unsupported type]({link})" : $"![Image {index}]({link})";
     }
 
+    /// <summary>Markdown for an image that couldn't be saved, with the reason as plain text on one line.</summary>
+    public static string ImageProblem(int index, string reason) =>
+        $"[Image {index}: {Escape(Whitespace().Replace(reason, " ").Trim().Replace(']', ')'))}]";
+
     /// <summary>
     /// Strips the inline HTML OneNote keeps inside text elements.
     /// </summary>

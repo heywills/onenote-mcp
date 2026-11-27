@@ -158,6 +158,13 @@ public class MarkdownTests
         Assert.Equal(markdown, PageMarkdown.ImageLink(2, folder, extension));
 
     [Theory]
+    [InlineData("OneNote hasn't downloaded this image yet.", "[Image 3: OneNote hasn't downloaded this image yet.]")]
+    [InlineData("Can't save \"C:\\a\\b\":\nAccess denied]", "[Image 3: Can't save \"C:\\\\a\\\\b\": Access denied)]")]
+    [InlineData("bad *markup* and `code`", "[Image 3: bad \\*markup\\* and \\`code\\`]")]
+    public void DescribesImagesItCouldntSave(string reason, string markdown) =>
+        Assert.Equal(markdown, PageMarkdown.ImageProblem(3, reason));
+
+    [Theory]
     [InlineData(new byte[] { 0x89, 0x50, 0x4E, 0x47 }, "png")]
     [InlineData(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }, "jpg")]
     [InlineData(new byte[] { 0x49, 0x49, 0x2A, 0x00 }, "tif")]

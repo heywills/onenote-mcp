@@ -47,7 +47,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 ## Notes
 
 - Search uses Windows Search, so it finds indexed pages only.
-- Images OneNote hasn't downloaded yet return an error from the image tools, and show as `[Image N: (reason)]` in saved pages. Open the page in OneNote desktop, then retry.
+- Images OneNote hasn't downloaded yet return an error from the image tools, and show as `[Image N: reason]` in saved pages. Open the page in OneNote desktop, then retry.
 - Markdown that OneNote can't hold:
   - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
   - Numbered lists start at 1. OneNote numbers lists itself, so separate lists alternate between `1.` and `1)` in OneNote to restart.

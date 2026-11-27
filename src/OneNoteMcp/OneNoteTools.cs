@@ -113,7 +113,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         }
         catch (McpException e)
         {
-            return ($"[Image {img.Index}: {e.Message.Replace(']', ')')}]", false);
+            return (PageMarkdown.ImageProblem(img.Index, e.Message), false);
         }
 
         var extension = Images.Extension(data);
@@ -121,9 +121,9 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         {
             PageFiles.Write(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outputPath))!, folder, $"image-{img.Index}.{extension}"), data);
         }
-        catch (McpException)
+        catch (McpException e)
         {
-            return ($"[Image {img.Index}: couldn't save]", false);
+            return (PageMarkdown.ImageProblem(img.Index, e.Message), false);
         }
 
         return (PageMarkdown.ImageLink(img.Index, folder, extension), true);
