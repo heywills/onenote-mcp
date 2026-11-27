@@ -158,7 +158,7 @@ public class LiveTests
         var expected = markdown.Replace("3. Starts at three\n4. Four", "1. Starts at three\n2. Four").Replace("- ![screenshot]", "- [screenshot]")
             .Replace(@"(\\\\fileserver\\share\\spec.docx)", "(file://fileserver/share/spec.docx)")
             .Replace("\treturn 1", "        return 1"); // OneNote stores a tab in code as 8 spaces
-        WithPage(markdown, pageId => Assert.Equal(expected, _tools.GetPage(pageId)));
+        WithPage(markdown, pageId => Assert.Equal(expected, _tools.GetPage(pageId, inline: true)));
     }
 
     // What OneNote shows, not what the reader prints: each list restarts at 1, in Arabic numerals.
@@ -171,7 +171,34 @@ public class LiveTests
     [LiveFact]
     public void OpensPageByLink() =>
         WithPage("# Live link test (deleting now)\n\nBody", pageId =>
-            Assert.StartsWith($"page_id: `{pageId}`", _tools.GetPageByLink(_client.GetHyperlink(pageId))));
+            Assert.StartsWith($"page_id: `{pageId}`", _tools.GetPageByLink(_client.GetHyperlink(pageId), inline: true)));
+
+    [LiveFact]
+    public void SavesPagesToFiles() =>
+        WithPage("# Live file test (deleting now)\n\nBody", pageId =>
+        {
+            var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+            try
+            {
+                var page = Path.Combine(folder, "new", "page.md");
+                var saved = JsonDocument.Parse(_tools.GetPage(pageId, page)).RootElement;
+                Assert.Equal(page, saved.GetProperty("path").GetString());
+                Assert.Equal(pageId, saved.GetProperty("page_id").GetString());
+                Assert.Equal(_tools.GetPage(pageId, inline: true), File.ReadAllText(page));
+
+                var byLink = Path.Combine(folder, "by-link.md");
+                _tools.GetPageByLink(_client.GetHyperlink(pageId), byLink);
+                Assert.Equal(File.ReadAllText(page), File.ReadAllText(byLink));
+
+                var raw = Path.Combine(folder, "page.xml");
+                _tools.GetPageRaw(pageId, raw);
+                Assert.Contains("Live file test", File.ReadAllText(raw));
+            }
+            finally
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        });
 
     // OneNote stores a page link in its own relative form; the reader turns it back into one get_page_by_link opens.
     // The title has & # % : "Copy link to page" drops & and #, and the link still opens.
@@ -180,9 +207,9 @@ public class LiveTests
         WithPage("# Live link target Q&A #1 50% (deleting now)\n\nTarget", targetId =>
             WithPage($"# Live link source (deleting now)\n\n[Target](<{_client.GetHyperlink(targetId)}>)", sourceId =>
             {
-                var line = _tools.GetPage(sourceId).Split('\n').Single(l => l.StartsWith("[Target]("));
+                var line = _tools.GetPage(sourceId, inline: true).Split('\n').Single(l => l.StartsWith("[Target]("));
                 var link = line["[Target](<".Length..^2];
-                Assert.StartsWith($"page_id: `{targetId}`", _tools.GetPageByLink(link));
+                Assert.StartsWith($"page_id: `{targetId}`", _tools.GetPageByLink(link, inline: true));
             }));
 
     /// <remarks>
@@ -218,7 +245,7 @@ public class LiveTests
     [LiveFact]
     public void ReportsOneNoteErrors()
     {
-        var e = Assert.Throws<McpException>(() => _tools.GetPage("{bogus}"));
+        var e = Assert.Throws<McpException>(() => _tools.GetPage("{bogus}", inline: true));
         Assert.Contains("Page not found (0x80042005)", e.Message);
     }
 
@@ -231,7 +258,7 @@ public class LiveTests
             return; // optional
         }
 
-        var pageId = _tools.GetPageByLink(link).Split('`')[1];
+        var pageId = _tools.GetPageByLink(link, inline: true).Split('`')[1];
         var image = _tools.GetPageImages(pageId, maxImages: 1, maxSizeKb: 64).OfType<ImageContentBlock>().First();
         Assert.StartsWith("image/", image.MimeType);
         Assert.InRange(image.DecodedData.Length, 1, 64 * 1024);

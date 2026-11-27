@@ -11,7 +11,7 @@ builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 builder.Services
     .AddSingleton<OneNoteClient>()
     .AddMcpServer(o => o.ServerInstructions =
-        "Access OneNote desktop notebooks through COM. Read, search, and create pages, and see embedded images.")
+        "Access OneNote desktop notebooks through COM. Read, search, create, and delete pages, and see embedded images. Page reads save to a file you name unless you pass inline=true.")
     .WithStdioServerTransport()
     .WithToolsFromAssembly();
 

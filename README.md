@@ -23,6 +23,8 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown. |
 | `onenote_delete_page` | Moves a page to Deleted Pages. Subpages stay. |
 
+The 3 `onenote_get_page*` tools save to `outputPath`, an absolute file path the agent names, and return the path. `inline=true` returns the page in the response instead.
+
 ## Requirements
 
 - Windows with OneNote desktop (Microsoft 365), not the Store version. COM starts OneNote if it's closed.
