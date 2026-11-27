@@ -123,9 +123,35 @@ public class MarkdownTests
             + "<one:T><![CDATA[ and <span style='font-style:italic'>x </span><span style='font-style:italic'>y</span>]]></one:T></one:OE>"));
 
     [Fact]
-    public void ListItemWithoutTextDoesNotIndentItsChildren() =>
-        Assert.Equal("# P\n\nchild", Read(
+    public void ListItemWithoutTextKeepsItsMarkerAndNesting()
+    {
+        const string bullet = "<one:List><one:Bullet bullet=\"2\"/></one:List>";
+        Assert.Equal("# P\n\n- a\n-\n\n  [Image 1]\n\n- c", Read(
+            $"<one:OE>{bullet}<one:T>a</one:T></one:OE><one:OE>{bullet}<one:Image><one:CallbackID callbackID=\"cb\"/></one:Image></one:OE><one:OE>{bullet}<one:T>c</one:T></one:OE>"));
+        Assert.Equal("# P\n\n1.\n\n   child", Read(
             "<one:OE><one:List><one:Number numberSequence=\"0\" numberFormat=\"##.\" text=\"1.\"/></one:List><one:OEChildren><one:OE><one:T><![CDATA[child]]></one:T></one:OE></one:OEChildren></one:OE>"));
+    }
+
+    [Fact]
+    public void RepeatsThePlaceholderForAnImageShownAgain() =>
+        Assert.Equal("# P\n\n[Image 1]\n\nbetween\n\n[Image 1]", Read(
+            "<one:OE><one:Image><one:CallbackID callbackID=\"cb\"/></one:Image></one:OE><one:OE><one:T>between</one:T></one:OE><one:OE><one:Image><one:CallbackID callbackID=\"cb\"/></one:Image></one:OE>"));
+
+    [Fact]
+    public void UsesHtmlWhereEmphasisMarkersCannotOpenOrClose() =>
+        Assert.Equal("# P\n\nfunc<strong>(x)</strong> and <strong>\"Note\"</strong>s but **bold** (**ok**)", Read(
+            "<one:OE><one:T><![CDATA[func<span style='font-weight:bold'>(x)</span> and <span style='font-weight:bold'>\"Note\"</span>s but <b>bold</b> (<b>ok</b>)]]></one:T></one:OE>"));
+
+    [Theory]
+    [InlineData("func<strong>(x)</strong> and <em>\"Note\"</em>s")]
+    [InlineData("[`a[0]`](https://x) and [a\\\\\\]](https://y)")]
+    public void RoundTripsEmphasisAndLinkEdgeCases(string markdown) =>
+        Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
+
+    [Fact]
+    public void EscapesBracketsInLinkTextOutsideCode() =>
+        Assert.Equal("# P\n\n[`a[0]`](https://x) and [a\\\\\\]](https://y)", Read(
+            "<one:OE><one:T><![CDATA[<a href=\"https://x\"><span style='font-family:Consolas'>a[0]</span></a> and <a href=\"https://y\">a\\]</a>]]></one:T></one:OE>"));
 
     [Fact]
     public void TrimsByteOrderMarkBeforeConverting() =>

@@ -49,7 +49,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
   - A hard line break inside a paragraph splits it into two paragraphs. OneNote drops line breaks inside a paragraph.
   - Images become links. Code blocks lose their language.
   - Headings, tables, and code inside a quote lose the quote.
-  - Bold that covers a whole table header cell is dropped, since the header row is already bold.
+  - Bold that covers a whole table header cell is dropped, since the header row is already bold. So is italic that covers a whole h4 or h6 heading, since those styles are italic.
 
 ## Tests
 

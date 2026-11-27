@@ -126,6 +126,14 @@ public static partial class PageMarkdown
             var html = OeHtml(oe);
             var hasText = oe.Element(One + "T") is not null && oe != repeatedTitle;
 
+            // A list item with no text, such as a bullet holding only an image, still gets its marker line.
+            var listItem = marker is not null && oe != repeatedTitle;
+            var childIndent = listItem ? indent + new string(' ', marker!.Length) : indent;
+            if (listItem && !hasText)
+            {
+                ListItem(prefix, marker!, "", quote);
+            }
+
             if (hasText && styleName == "code" && marker is null)
             {
                 CodeLine(indent, Parser.ParseDocument($"<body>{html}</body>").Body!.TextContent.Replace(' ', ' '));
@@ -158,18 +166,18 @@ public static partial class PageMarkdown
             {
                 switch (child.Name.LocalName)
                 {
+                    // Only list items indent their content. Indented text elsewhere would read as code.
                     case "Image":
-                        Image(child, indent);
+                        Image(child, childIndent);
                         break;
                     case "Table":
-                        Table(child, indent);
+                        Table(child, childIndent);
                         break;
                     case "InsertedFile":
-                        Paragraph(indent, $"[Attached: {Escape((string?)child.Attribute("preferredName") ?? "file")}]", false);
+                        Paragraph(childIndent, $"[Attached: {Escape((string?)child.Attribute("preferredName") ?? "file")}]", false);
                         break;
                     case "OEChildren":
-                        // Only list items with a line indent their children. Indented text elsewhere would read as code.
-                        Block(child, marker is null || !hasText ? indent : indent + new string(' ', marker.Length), quoteColumn);
+                        Block(child, childIndent, quoteColumn);
                         break;
                 }
             }
@@ -178,14 +186,20 @@ public static partial class PageMarkdown
         public void Image(XElement img, string indent)
         {
             var id = (string?)img.Element(One + "CallbackID")?.Attribute("callbackID") ?? (string?)img.Attribute("callbackID");
-            if (id is null || Images.Any(i => i.CallbackId == id))
+            if (id is null)
             {
                 return;
             }
 
-            var size = img.Element(One + "Size");
-            var reference = new ImageRef(id, Images.Count + 1, ToDouble(size?.Attribute("width")), ToDouble(size?.Attribute("height")));
-            Images.Add(reference);
+            // An image shown again reuses its number
+            var reference = Images.FirstOrDefault(i => i.CallbackId == id);
+            if (reference is null)
+            {
+                var size = img.Element(One + "Size");
+                reference = new ImageRef(id, Images.Count + 1, ToDouble(size?.Attribute("width")), ToDouble(size?.Attribute("height")));
+                Images.Add(reference);
+            }
+
             Paragraph(indent, $"[Image {reference.Index}]", false);
         }
 
@@ -248,7 +262,7 @@ public static partial class PageMarkdown
                 _topLevelBullet = bullet;
             }
 
-            _lines.Add(prefix + marker + text);
+            _lines.Add((prefix + marker + text).TrimEnd());
             _kind = "list";
             _quotePrefix = quote ? prefix : null;
         }
@@ -358,7 +372,8 @@ public static partial class PageMarkdown
         return Wrap(text, paragraph.Bold && !ignore.Bold ? "**" : "");
     }
 
-    private static string Inline(IEnumerable<INode> nodes, bool inCode, (bool Bold, bool Italic) ignore)
+    /// <param name="inLink">Inside link text, where any bracket outside code would end the link</param>
+    private static string Inline(IEnumerable<INode> nodes, bool inCode, (bool Bold, bool Italic) ignore, bool inLink = false)
     {
         var sb = new StringBuilder();
         var list = nodes.ToList();
@@ -368,7 +383,13 @@ public static partial class PageMarkdown
             if (node is IText t)
             {
                 var text = t.Data.Replace(' ', ' ');
-                sb.Append(inCode ? text : Escape(Whitespace().Replace(text, " ")));
+                if (!inCode)
+                {
+                    text = Whitespace().Replace(text, " ");
+                    text = inLink ? LinkTextSpecial().Replace(text, @"\$0") : Escape(text);
+                }
+
+                sb.Append(text);
                 continue;
             }
 
@@ -389,7 +410,7 @@ public static partial class PageMarkdown
             var style = StyleOf(e.GetAttribute("style") ?? "");
             var tag = e.LocalName;
             var code = inCode || style.Code || tag == "code";
-            var inner = Inline(run.SelectMany(r => r.ChildNodes), code, ignore);
+            var inner = Inline(run.SelectMany(r => r.ChildNodes), code, ignore, inLink || tag == "a");
 
             if (tag == "br")
             {
@@ -401,8 +422,7 @@ public static partial class PageMarkdown
             }
             else if (tag == "a")
             {
-                // Any unescaped bracket in link text would end the link early
-                sb.Append($"[{UnescapedBracket().Replace(inner.Trim(), @"\$0")}]({LinkDestination(e.GetAttribute("href") ?? "")})");
+                sb.Append($"[{inner.Trim()}]({LinkDestination(e.GetAttribute("href") ?? "")})");
             }
             else if (code && !inCode)
             {
@@ -414,13 +434,73 @@ public static partial class PageMarkdown
             }
             else
             {
-                inner = Wrap(inner, style.Strike || tag is "s" or "del" or "strike" ? "~~" : "");
-                inner = Wrap(inner, (style.Italic || tag is "i" or "em") && !ignore.Italic ? "*" : "");
-                sb.Append(Wrap(inner, (style.Bold || tag is "b" or "strong") && !ignore.Bold ? "**" : ""));
+                var strike = style.Strike || tag is "s" or "del" or "strike";
+                var italic = (style.Italic || tag is "i" or "em") && !ignore.Italic;
+                var bold = (style.Bold || tag is "b" or "strong") && !ignore.Bold;
+                var before = sb.Length > 0 ? sb[^1] : ' ';
+                var after = i + 1 < list.Count && list[i + 1].TextContent is { Length: > 0 } nextText ? nextText[0] : ' ';
+
+                if (!MarkersCanWrap(inner, before, after))
+                {
+                    // "func**(x)**" shows the asterisks: Markdown emphasis can't open between a letter and punctuation.
+                    inner = WrapHtml(inner, strike ? "del" : "");
+                    inner = WrapHtml(inner, italic ? "em" : "");
+                    sb.Append(WrapHtml(inner, bold ? "strong" : ""));
+                }
+                else
+                {
+                    inner = Wrap(inner, strike ? "~~" : "");
+                    inner = Wrap(inner, italic ? "*" : "");
+                    sb.Append(Wrap(inner, bold ? "**" : ""));
+                }
             }
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Whether Markdown emphasis markers around <paramref name="text"/> would open and close, given its neighbors.
+    /// </summary>
+    /// <remarks>
+    /// - A marker next to punctuation counts only with whitespace or punctuation on its other side (CommonMark flanking rules).
+    /// - Wrap keeps edge spaces outside, so a space at an edge makes that edge's neighbor a space.
+    /// </remarks>
+    private static bool MarkersCanWrap(string text, char before, char after)
+    {
+        var core = text.Trim();
+        if (core.Length == 0)
+        {
+            return true;
+        }
+
+        if (text[0] == ' ')
+        {
+            before = ' ';
+        }
+
+        if (text[^1] == ' ')
+        {
+            after = ' ';
+        }
+
+        var opens = !char.IsPunctuation(core[0]) && !char.IsSymbol(core[0]) || char.IsWhiteSpace(before) || char.IsPunctuation(before) || char.IsSymbol(before);
+        var closes = !char.IsPunctuation(core[^1]) && !char.IsSymbol(core[^1]) || char.IsWhiteSpace(after) || char.IsPunctuation(after) || char.IsSymbol(after);
+        return opens && closes;
+    }
+
+    /// <summary>
+    /// Wraps text in an HTML tag, keeping edge spaces outside.
+    /// </summary>
+    private static string WrapHtml(string text, string tag)
+    {
+        var core = text.Trim();
+        if (tag.Length == 0 || core.Length == 0)
+        {
+            return text;
+        }
+
+        return $"{text[..(text.Length - text.TrimStart().Length)]}<{tag}>{core}</{tag}>{text[text.TrimEnd().Length..]}";
     }
 
     /// <summary>
@@ -547,8 +627,9 @@ public static partial class PageMarkdown
     [GeneratedRegex(@"[\\*`]|\](?=[(\[:])|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])|<(?=[A-Za-z/!?])|~(?=~)|(?<=~)~|&(?=#?\w+;)")]
     private static partial Regex InlineSpecial();
 
-    [GeneratedRegex(@"(?<!\\)[\[\]]")]
-    private static partial Regex UnescapedBracket();
+    // Escape() plus every bracket, which would end link text early
+    [GeneratedRegex(@"[\\*`\[\]]|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])|<(?=[A-Za-z/!?])|~(?=~)|(?<=~)~|&(?=#?\w+;)")]
+    private static partial Regex LinkTextSpecial();
 
     [GeneratedRegex(@"(^|\s)(#+)\s*$")]
     private static partial Regex ClosingHashes();

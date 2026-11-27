@@ -115,10 +115,17 @@ public class LiveTests
             `x  =  1` and > *whole quote italic* stays text
 
             > *whole quote italic*
+
+            - before
+            - ![screenshot](https://x.test/s.png)
+            - after
+
+            func<strong>(x)</strong> and [`a[0]`](https://x.test/code)
             """.Replace("\r\n", "\n");
 
         // OneNote numbers each list itself, from 1
-        var expected = markdown.Replace("3. Starts at three\n4. Four", "1. Starts at three\n2. Four");
+        // Images become links
+        var expected = markdown.Replace("3. Starts at three\n4. Four", "1. Starts at three\n2. Four").Replace("- ![screenshot]", "- [screenshot]");
         WithPage(markdown, pageId => Assert.Equal(expected, _tools.GetPage(pageId)));
     }
 
@@ -173,11 +180,18 @@ public class LiveTests
     {
         var path = Environment.GetEnvironmentVariable(SectionVariable)!;
         var slash = path.LastIndexOf('/');
-        var (notebookName, sectionName) = (path[..slash], path[(slash + 1)..]);
+        if (slash <= 0)
+        {
+            throw new InvalidOperationException($"Set {SectionVariable} to \"Notebook name/Section name\", not \"{path}\"");
+        }
 
-        var notebookId = JsonDocument.Parse(_tools.ListNotebooks()).RootElement.EnumerateArray()
-            .First(n => n.GetProperty("name").GetString() == notebookName).GetProperty("id").GetString()!;
-        return JsonDocument.Parse(_tools.ListSections(notebookId)).RootElement.EnumerateArray()
-            .First(s => s.GetProperty("name").GetString() == sectionName).GetProperty("id").GetString()!;
+        var (notebookName, sectionName) = (path[..slash], path[(slash + 1)..]);
+        static string? IdOf(string json, string name) => JsonDocument.Parse(json).RootElement.EnumerateArray()
+            .Where(e => e.GetProperty("name").GetString() == name).Select(e => e.GetProperty("id").GetString()).FirstOrDefault();
+
+        var notebookId = IdOf(_tools.ListNotebooks(), notebookName)
+            ?? throw new InvalidOperationException($"Notebook \"{notebookName}\" isn't open in OneNote");
+        return IdOf(_tools.ListSections(notebookId), sectionName)
+            ?? throw new InvalidOperationException($"Section \"{sectionName}\" not found in \"{notebookName}\"");
     }
 }

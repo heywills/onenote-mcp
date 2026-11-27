@@ -182,15 +182,16 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         [Description("Page title")] string title,
         [Description("""
             Optional HTML for the page body.
-            Block: <p>, <div>, <br>, <h1>-<h6>, <ul>/<ol>/<li> (nested OK), <table>/<tr>/<th>/<td>, <pre>, <hr>.
-            Inline: <b>, <i>, <u>, <s>, <sup>, <sub>, <code>, <a href>.
+            Block: <p>, <div>, <br>, <h1>-<h6>, <ul>/<ol>/<li> (nested OK), <table>/<tr>/<th>/<td>, <pre>, <blockquote>, <hr>.
+            Inline: <b>, <i>, <u>, <s>, <sup>, <sub>, <code>, <a href>, <img> (becomes a link).
             """)] string contentHtml = "") =>
         CreatePageFromHtml(sectionId, title, contentHtml);
 
     [McpServerTool(Name = "onenote_create_page_from_markdown", Destructive = false)]
     [Description("""
         Create a new page in a section from Markdown.
-        Supports headings, paragraphs, nested bullet and numbered lists, pipe tables, fenced code, bold, italic, strikethrough, inline code, and links.
+        Supports headings, paragraphs, nested bullet and numbered lists, pipe tables, fenced code, blockquotes, rules, bold, italic, strikethrough, inline code, and links.
+        Images become links. onenote_get_page reads the page back as Markdown.
         """)]
     public string CreatePageFromMarkdown(
         [Description("The section ID")] string sectionId,
