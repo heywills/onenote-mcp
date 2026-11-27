@@ -1,0 +1,99 @@
+using System.Xml.Linq;
+
+namespace OneNoteMcp.Tests;
+
+public class PageHtmlTests
+{
+    private static readonly XNamespace One = Hierarchy.One;
+
+    private static string Body(string oes, string tableAndMore = "") =>
+        PageHtml.Convert($"""
+            <one:Page xmlns:one="{One}" name="My page">
+              <one:QuickStyleDef index="0" name="PageTitle"/>
+              <one:QuickStyleDef index="1" name="p"/>
+              <one:QuickStyleDef index="2" name="h2"/>
+              <one:QuickStyleDef index="3" name="blockquote"/>
+              <one:QuickStyleDef index="4" name="code"/>
+              <one:Title><one:OE><one:T><![CDATA[My page]]></one:T></one:OE></one:Title>
+              <one:Outline><one:OEChildren>{oes}</one:OEChildren></one:Outline>{tableAndMore}
+            </one:Page>
+            """).Html.Split("<body>\n")[1].Split("</body>")[0];
+
+    [Fact]
+    public void WritesADocumentWithTheTitle()
+    {
+        var html = PageHtml.Convert($"""<one:Page xmlns:one="{One}" name="Q&amp;A"><one:Title/></one:Page>""").Html;
+        Assert.StartsWith("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>Q&amp;A</title>", html);
+    }
+
+    [Fact]
+    public void KeepsParagraphStyleAlignmentAndInlineHtml() =>
+        Assert.Equal(
+            "<p style=\"font-family:Calibri;font-size:12.0pt;color:#14324D;text-align:center\">Big <span style='color:red'>red</span></p>\n",
+            Body("""<one:OE quickStyleIndex="1" alignment="center" style="font-family:Calibri;font-size:12.0pt;&#xA;color:#14324D"><one:T><![CDATA[Big <span style='color:red'>red</span>]]></one:T></one:OE>"""));
+
+    [Fact]
+    public void GroupsListsQuotesAndCode()
+    {
+        const string bullet = "<one:List><one:Bullet bullet=\"2\"/></one:List>";
+        var html = Body($"""
+            <one:OE>{bullet}<one:T>a</one:T><one:OEChildren><one:OE><one:List><one:Number numberSequence="0" numberFormat="##." text="3."/></one:List><one:T>three</one:T></one:OE></one:OEChildren></one:OE>
+            <one:OE>{bullet}<one:T>b</one:T></one:OE>
+            <one:OE quickStyleIndex="3"><one:T>quoted</one:T></one:OE>
+            <one:OE quickStyleIndex="3"><one:T>more</one:T></one:OE>
+            <one:OE quickStyleIndex="4"><one:T>x &lt; 1</one:T></one:OE>
+            <one:OE quickStyleIndex="4"><one:T>  y</one:T></one:OE>
+            <one:OE quickStyleIndex="2"><one:T>Heading</one:T></one:OE>
+            """);
+
+        Assert.Equal("""
+            <ul>
+            <li>a<ol start="3">
+            <li>three</li>
+            </ol>
+            </li>
+            <li>b</li>
+            </ul>
+            <blockquote>
+            <p>quoted</p>
+            <p>more</p>
+            </blockquote>
+            <pre>x &lt; 1
+              y</pre>
+            <h2>Heading</h2>
+
+            """.Replace("\r\n", "\n"), html);
+    }
+
+    [Fact]
+    public void IndentsChildrenOfAParagraph() =>
+        Assert.Equal("<p>Parent</p>\n<div class=\"indent\" style=\"margin-left:2em\">\n<p>Child</p>\n</div>\n",
+            Body("<one:OE><one:T>Parent</one:T><one:OEChildren><one:OE><one:T>Child</one:T></one:OE></one:OEChildren></one:OE>"));
+
+    [Fact]
+    public void KeepsTableHeadersAndShading() =>
+        Assert.Equal("<table>\n<tr><th>\n<p>H</p>\n</th></tr>\n<tr><td style=\"background-color:#DDEBF7\">\n<p>Shaded</p>\n</td></tr>\n</table>\n",
+            Body("""
+                <one:OE><one:Table hasHeaderRow="true">
+                  <one:Row><one:Cell><one:OEChildren><one:OE><one:T>H</one:T></one:OE></one:OEChildren></one:Cell></one:Row>
+                  <one:Row><one:Cell shadingColor="#DDEBF7"><one:OEChildren><one:OE><one:T>Shaded</one:T></one:OE></one:OEChildren></one:Cell></one:Row>
+                </one:Table></one:OE>
+                """));
+
+    [Fact]
+    public void WritesImagesWithTheirSize()
+    {
+        var html = Body("""<one:OE><one:Image><one:Size width="120.5" height="60"/><one:CallbackID callbackID="cb"/></one:Image></one:OE>""");
+        Assert.Equal("<p><img data-callback-id=\"cb\" alt=\"Image 1\" style=\"width:120.5pt;height:60pt\"></p>\n", html);
+    }
+
+    [Theory]
+    [InlineData("png", "<img src=\"My%20page_images/image-2.png\" alt=\"Image 2\">")]
+    [InlineData("bin", "<a href=\"My%20page_images/image-2.bin\">Image 2: unsupported type</a>")]
+    public void LinksSavedImages(string extension, string html) =>
+        Assert.Equal(html, PageHtml.ImageLink(new ImageRef("cb", 2, null, null), "My page_images", extension));
+
+    [Fact]
+    public void DescribesImagesItCouldntSave() =>
+        Assert.Equal("[Image 3: Can&#39;t save &lt;x&gt;]", PageHtml.ImageProblem(3, "Can't save <x>"));
+}

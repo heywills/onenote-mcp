@@ -27,21 +27,7 @@ public static partial class PageMarkdown
     public static (string Markdown, IReadOnlyList<ImageRef> Images) Convert(string xml, Func<ImageRef, string>? imageMarkdown = null)
     {
         var root = XElement.Parse(xml);
-        var title = (string?)root.Attribute("name") ?? (string?)root.Attribute("ID") ?? "Untitled";
-        // The first def wins when an index repeats
-        var styles = root.Elements(One + "QuickStyleDef").GroupBy(q => (string?)q.Attribute("index") ?? "").ToDictionary(
-            g => g.Key,
-            g => (Name: (string?)g.First().Attribute("name") ?? "", Italic: (string?)g.First().Attribute("italic") == "true"));
-
-        // Without a Title element, OneNote names the page after its first line, so that line repeats the name.
-        var repeatedTitle = root.Element(One + "Title") is null
-            ? root.Elements(One + "Outline").FirstOrDefault()?.Element(One + "OEChildren")?.Element(One + "OE")
-            : null;
-        if (repeatedTitle is not null && CleanText(string.Concat(repeatedTitle.Elements(One + "T").Select(t => t.Value))).Trim() != title.Trim())
-        {
-            repeatedTitle = null;
-        }
-
+        var (title, styles, repeatedTitle) = Parts(root);
         var writer = new Writer(styles, repeatedTitle, imageMarkdown ?? (img => $"[Image {img.Index}]"));
         foreach (var outline in root.Descendants(One + "Outline"))
         {
@@ -59,6 +45,27 @@ public static partial class PageMarkdown
         }
 
         return ($"# {EscapeClosingHashes(Escape(title))}\n\n{writer}".Trim(), writer.Images);
+    }
+
+    /// <summary>A page's title, its styles by index, and the first OE when it only repeats the title.</summary>
+    internal static (string Title, Dictionary<string, (string Name, bool Italic)> Styles, XElement? RepeatedTitle) Parts(XElement root)
+    {
+        var title = (string?)root.Attribute("name") ?? (string?)root.Attribute("ID") ?? "Untitled";
+        // The first def wins when an index repeats
+        var styles = root.Elements(One + "QuickStyleDef").GroupBy(q => (string?)q.Attribute("index") ?? "").ToDictionary(
+            g => g.Key,
+            g => (Name: (string?)g.First().Attribute("name") ?? "", Italic: (string?)g.First().Attribute("italic") == "true"));
+
+        // Without a Title element, OneNote names the page after its first line, so that line repeats the name.
+        var repeatedTitle = root.Element(One + "Title") is null
+            ? root.Elements(One + "Outline").FirstOrDefault()?.Element(One + "OEChildren")?.Element(One + "OE")
+            : null;
+        if (repeatedTitle is not null && CleanText(string.Concat(repeatedTitle.Elements(One + "T").Select(t => t.Value))).Trim() != title.Trim())
+        {
+            repeatedTitle = null;
+        }
+
+        return (title, styles, repeatedTitle);
     }
 
     /// <summary>Markdown for an image saved as <c>image-N.extension</c> in <paramref name="folder"/>, next to the page file.</summary>

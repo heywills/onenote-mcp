@@ -25,6 +25,11 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         Web URLs, network shares and drives, unsafe symbolic links, files over 50 MB, images that would push the page past 50 MB, images inside headings, table headers, links, or formatting, and missing or other files stay links. The result counts both.
         """;
 
+    private const string FormatDescription = """
+        markdown (default) or html. HTML keeps what Markdown drops: colors, highlights, fonts, sizes, alignment, indents, cell shading, image sizes.
+        onenote_create_page reads it back, with the title from <title>.
+        """;
+
     private const string InlineDescription = "Return the content in the response instead of saving a file. Don't pass outputPath with it.";
 
     private static readonly JsonSerializerOptions Json = new()
@@ -79,38 +84,45 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     public string GetPage(
         [Description("The page ID, from onenote_list_pages or a search")] string pageId,
         [Description(OutputPathDescription)] string outputPath = "",
-        [Description(InlineDescription)] bool inline = false)
+        [Description(InlineDescription)] bool inline = false,
+        [Description(FormatDescription)] string format = "markdown")
     {
+        var html = IsHtml(format);
         CheckPageOutput(outputPath, inline);
-        return inline ? PageText(pageId) : SavePage(pageId, outputPath);
+        return inline ? PageText(pageId, html) : SavePage(pageId, outputPath, html);
     }
 
-    /// <summary>Saves the page as Markdown, with its images in a folder next to it: <c>page.md</c> gets <c>page_images</c>.</summary>
+    /// <summary>Saves the page as Markdown or HTML, with its images in a folder next to it: <c>page.md</c> gets <c>page_images</c>.</summary>
     /// <remarks>
     /// - An image that can't be saved stays as text with the reason, such as <c>[Image N: OneNote hasn't downloaded this image yet…]</c>, so one image doesn't fail the save.
     /// - Images are saved full size. Saving again overwrites them.
     /// </remarks>
-    private string SavePage(string pageId, string outputPath)
+    private string SavePage(string pageId, string outputPath, bool html)
     {
         var xml = oneNote.GetPageContent(pageId);
-        var (_, images) = PageMarkdown.Convert(xml);
+        var images = html ? PageHtml.Convert(xml).Images : PageMarkdown.Convert(xml).Images;
         var folder = Path.GetFileNameWithoutExtension(outputPath) + "_images";
         var saved = images.ToDictionary(img => img.CallbackId, img => SaveImage(pageId, img, outputPath, folder));
-        var (markdown, _) = PageMarkdown.Convert(xml, img => saved[img.CallbackId].Markdown);
+        string Markup(ImageRef img) => saved[img.CallbackId] switch
+        {
+            { Problem: { } problem } => html ? PageHtml.ImageProblem(img.Index, problem) : PageMarkdown.ImageProblem(img.Index, problem),
+            { Extension: var extension } => html ? PageHtml.ImageLink(img, folder, extension) : PageMarkdown.ImageLink(img.Index, folder, extension),
+        };
 
+        var content = html ? PageHtml.Convert(xml, Markup).Html : PageMarkdown.Convert(xml, Markup).Markdown;
         return ToJson(new
         {
             Status = "saved",
-            Path = PageFiles.Write(outputPath, markdown),
+            Path = PageFiles.Write(outputPath, content),
             PageId = pageId,
-            Images = saved.Values.Count(s => s.Saved),
-            MissingImages = saved.Values.Count(s => !s.Saved),
+            Images = saved.Values.Count(s => s.Problem is null),
+            MissingImages = saved.Values.Count(s => s.Problem is not null),
         });
     }
 
     /// <summary>Saves one image to the page's image folder.</summary>
-    /// <returns>The image's Markdown, and whether its file was saved</returns>
-    private (string Markdown, bool Saved) SaveImage(string pageId, ImageRef img, string outputPath, string folder)
+    /// <returns>The saved file's extension, or why it couldn't be saved</returns>
+    private (string Extension, string? Problem) SaveImage(string pageId, ImageRef img, string outputPath, string folder)
     {
         byte[] data;
         try
@@ -119,7 +131,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         }
         catch (McpException e)
         {
-            return (PageMarkdown.ImageProblem(img.Index, e.Message), false);
+            return ("", e.Message);
         }
 
         var extension = Images.Extension(data);
@@ -129,14 +141,27 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         }
         catch (McpException e)
         {
-            return (PageMarkdown.ImageProblem(img.Index, e.Message), false);
+            return ("", e.Message);
         }
 
-        return (PageMarkdown.ImageLink(img.Index, folder, extension), true);
+        return (extension, null);
     }
 
-    private string PageText(string pageId)
+    /// <summary>Whether <paramref name="format"/> asks for HTML. Checked before any OneNote call.</summary>
+    private static bool IsHtml(string format) => format.ToLowerInvariant() switch
     {
+        "markdown" or "md" or "" => false,
+        "html" => true,
+        _ => throw new McpException($"format must be markdown or html, not \"{format}\""),
+    };
+
+    private string PageText(string pageId, bool html)
+    {
+        if (html)
+        {
+            return PageHtml.Convert(oneNote.GetPageContent(pageId)).Html;
+        }
+
         var (markdown, images) = PageMarkdown.Convert(oneNote.GetPageContent(pageId));
         if (images.Count == 0)
         {
@@ -153,18 +178,20 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
 
     [McpServerTool(Name = "onenote_get_page_by_link", ReadOnly = false, Destructive = true)]
     [Description("""
-        Get a page as Markdown from its OneNote "Copy link to page" link.
+        Get a page as Markdown or HTML from its OneNote "Copy link to page" link.
         Accepts the onenote: link, the https://.../_layouts/Doc.aspx web link, or both pasted together.
         The notebook must be open in OneNote desktop. Saves to outputPath with its images, like onenote_get_page, or returns it with inline=true. Either way, the result has the page ID for follow-up calls.
         """)]
     public string GetPageByLink(
         [Description("The link, or both links, from \"Copy link to page\"")] string link,
         [Description(OutputPathDescription)] string outputPath = "",
-        [Description(InlineDescription)] bool inline = false)
+        [Description(InlineDescription)] bool inline = false,
+        [Description(FormatDescription)] string format = "markdown")
     {
+        var html = IsHtml(format);
         CheckPageOutput(outputPath, inline);
         var pageId = FindPageByLink(link);
-        return inline ? $"page_id: `{pageId}`\n\n{PageText(pageId)}" : SavePage(pageId, outputPath);
+        return inline ? $"page_id: `{pageId}`\n\n{PageText(pageId, html)}" : SavePage(pageId, outputPath, html);
     }
 
     private string FindPageByLink(string link)
@@ -265,17 +292,26 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     // Write
 
     [McpServerTool(Name = "onenote_create_page", Destructive = false)]
-    [Description("Create a new page in a section.")]
+    [Description("Create a new page in a section from HTML, such as a page onenote_get_page saved with format=html.")]
     public string CreatePage(
         [Description("The section ID")] string sectionId,
-        [Description("Page title")] string title,
+        [Description("Page title. Empty to use the HTML's <title>.")] string title = "",
         [Description("""
             Optional HTML for the page body.
             Block: <p>, <div>, <br>, <h1>-<h6>, <ul>/<ol>/<li> (nested OK), <table>/<tr>/<th>/<td>, <pre>, <blockquote>, <hr>.
-            Inline: <b>, <i>, <u>, <s>, <sup>, <sub>, <code>, <a href>, <img>.
+            Inline: <b>, <i>, <u>, <s>, <sup>, <sub>, <code>, <a href>, <img>, <span style>.
+            Kept: colors, highlights, fonts, and sizes on spans; font, color, and text-align on paragraphs and headings; td background colors; img width and height in pt.
             """ + ImagesDescription)] string contentHtml = "",
-        [Description("Absolute path of an HTML file for the page body, instead of contentHtml")] string inputPath = "") =>
-        CreatePageFromHtml(sectionId, title, Input(contentHtml, inputPath, nameof(contentHtml)), ImageFolder(inputPath));
+        [Description("Absolute path of an HTML file for the page body, instead of contentHtml")] string inputPath = "")
+    {
+        var html = Input(contentHtml, inputPath, nameof(contentHtml));
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = HtmlToOneNote.Title(html) ?? throw new McpException("No title: pass a title or give the HTML a <title>");
+        }
+
+        return CreatePageFromHtml(sectionId, title, html, ImageFolder(inputPath));
+    }
 
     [McpServerTool(Name = "onenote_create_page_from_markdown", Destructive = false)]
     [Description("""
