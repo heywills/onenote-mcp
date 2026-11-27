@@ -211,6 +211,11 @@ public class LiveTests
             }
         });
 
+    [LiveFact]
+    public void CreatesATitleOnlyPageFromMarkdown() =>
+        WithCreated(_tools.CreatePageFromMarkdown(SectionId(), title: "Live title-only test (deleting now)"), pageId =>
+            Assert.Equal("# Live title-only test (deleting now)", _tools.GetPage(pageId, inline: true)));
+
     // A page saved to a file comes back as the same Markdown when created from that file
     [LiveFact]
     public void CreatesPagesFromFiles() =>

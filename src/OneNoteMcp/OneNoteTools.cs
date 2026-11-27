@@ -10,7 +10,7 @@ using static OneNoteMcp.Hierarchy;
 namespace OneNoteMcp;
 
 [McpServerToolType]
-public sealed partial class OneNoteTools(OneNoteClient oneNote)
+public sealed class OneNoteTools(OneNoteClient oneNote)
 {
     private const int DefaultMaxImageKb = 512;
     private const string OutputPathDescription = "Absolute path of the file to save, such as C:\\work\\page.md. Overwrites it. Required unless inline is true.";
@@ -229,7 +229,7 @@ public sealed partial class OneNoteTools(OneNoteClient oneNote)
         [Description("Absolute path of a Markdown file, such as one onenote_get_page saved, instead of markdown")] string inputPath = "")
     {
         markdown = Input(markdown, inputPath, nameof(markdown));
-        if (string.IsNullOrWhiteSpace(markdown))
+        if (string.IsNullOrWhiteSpace(markdown) && string.IsNullOrWhiteSpace(title))
         {
             throw new McpException("Pass markdown or inputPath");
         }
@@ -288,24 +288,7 @@ public sealed partial class OneNoteTools(OneNoteClient oneNote)
             throw new McpException("Pass outputPath, an absolute file path such as C:\\work\\page.md, or pass inline=true");
         }
 
-        if (!Path.IsPathFullyQualified(outputPath))
-        {
-            throw new McpException($"outputPath must be absolute, such as C:\\work\\page.md, not \"{outputPath}\"");
-        }
-
-        // NUL and other device names become \\.\ paths here
-        if (IsDevicePath(outputPath) || IsDevicePath(Path.GetFullPath(outputPath)))
-        {
-            throw new McpException($"outputPath must be a file path, not a device path: \"{outputPath}\"");
-        }
-
-        var name = Path.GetFileName(outputPath);
-        if (name.Length == 0 || Path.GetDirectoryName(outputPath) is null || Directory.Exists(outputPath))
-        {
-            throw new McpException($"outputPath must name a file, not a folder: \"{outputPath}\"");
-        }
-
-        CheckFileName(name);
+        PageFiles.Check(outputPath, nameof(outputPath));
     }
 
     /// <summary>The content, or the text of <paramref name="inputPath"/> when one is given.</summary>
@@ -319,73 +302,17 @@ public sealed partial class OneNoteTools(OneNoteClient oneNote)
             return content;
         }
 
-        if (!string.IsNullOrEmpty(content))
+        if (!string.IsNullOrWhiteSpace(content))
         {
             throw new McpException($"Pass {contentName} or inputPath, not both");
         }
 
-        if (!Path.IsPathFullyQualified(inputPath) || IsDevicePath(inputPath))
-        {
-            throw new McpException($"inputPath must be an absolute file path, such as C:\\work\\page.md, not \"{inputPath}\"");
-        }
-
-        try
-        {
-            return File.ReadAllText(inputPath);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            throw new McpException($"Can't read \"{inputPath}\": {e.Message}", e);
-        }
+        PageFiles.Check(inputPath, nameof(inputPath));
+        return PageFiles.Read(inputPath);
     }
 
-    private static bool IsDevicePath(string path) => path.StartsWith(@"\\.\") || path.StartsWith(@"\\?\");
-
-    /// <remarks>
-    /// - Windows drops a trailing dot or space, so the file would land under another name.
-    /// - ':' would write to an NTFS alternate data stream.
-    /// - CON, AUX, COM1 and the like make files many tools can't open or delete.
-    /// </remarks>
-    private static void CheckFileName(string name)
-    {
-        if (name.EndsWith('.') || name.EndsWith(' '))
-        {
-            throw new McpException($"outputPath's file name can't end with a dot or space: \"{name}\"");
-        }
-
-        if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-        {
-            throw new McpException($"outputPath has characters a file name can't hold: \"{name}\"");
-        }
-
-        if (ReservedName().IsMatch(Path.GetFileNameWithoutExtension(name)))
-        {
-            throw new McpException($"outputPath uses a name Windows reserves for devices: \"{name}\"");
-        }
-    }
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"^(CON|PRN|AUX|NUL|COM[0-9\u00B9\u00B2\u00B3]|LPT[0-9\u00B9\u00B2\u00B3])$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
-    private static partial System.Text.RegularExpressions.Regex ReservedName();
-
-    private static string Output(string content, string outputPath, bool inline, string pageId)
-    {
-        if (inline)
-        {
-            return content;
-        }
-
-        try
-        {
-            var path = Path.GetFullPath(outputPath);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, content);
-            return ToJson(new { Status = "saved", Path = path, PageId = pageId });
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            throw new McpException($"Can't save \"{outputPath}\": {e.Message}", e);
-        }
-    }
+    private static string Output(string content, string outputPath, bool inline, string pageId) =>
+        inline ? content : ToJson(new { Status = "saved", Path = PageFiles.Write(outputPath, content), PageId = pageId });
 
     private string CreatePageFromHtml(string sectionId, string title, string contentHtml, bool fromMarkdown = false)
     {

@@ -1,3 +1,4 @@
+using System.Text;
 using ModelContextProtocol;
 
 namespace OneNoteMcp.Tests;
@@ -77,10 +78,53 @@ public class OutputTests
         Assert.Contains("Pass markdown or inputPath", Assert.Throws<McpException>(() => _tools.CreatePageFromMarkdown("{section}")).Message);
 
     [Theory]
-    [InlineData(@"notes\page.md")]
-    [InlineData(@"\\.\pipe\name")]
-    public void NeedsAnAbsoluteInputPath(string path) =>
-        Assert.Contains("absolute file path", Assert.Throws<McpException>(() => _tools.CreatePageFromMarkdown("{section}", inputPath: path)).Message);
+    [InlineData(@"notes\page.md", "must be absolute")]
+    [InlineData(@"\\.\pipe\name", "device path")]
+    [InlineData(@"\\?\C:\work\page.md", "device path")]
+    [InlineData(@"C:\work\NUL", "device path")]
+    [InlineData(@"C:\work\COM1.md", "reserves")]
+    public void ChecksTheInputPath(string path, string error) =>
+        Assert.Contains(error, Assert.Throws<McpException>(() => _tools.CreatePageFromMarkdown("{section}", inputPath: path)).Message);
+
+    [Fact]
+    public void RejectsAFolderAsInput() =>
+        Assert.Contains("must name a file", Assert.Throws<McpException>(() => _tools.CreatePage("{section}", "T", inputPath: Path.GetTempPath().TrimEnd('\\'))).Message);
+
+    [Fact]
+    public void TreatsBlankContentAsNone()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.md");
+        Assert.Contains("Can't read", Assert.Throws<McpException>(() => _tools.CreatePageFromMarkdown("{section}", " ", inputPath: path)).Message);
+    }
+
+    [Theory]
+    [InlineData("utf-8", true)]
+    [InlineData("utf-8", false)]
+    [InlineData("utf-16", true)]
+    public void ReadsUnicodeFiles(string encoding, bool bom) =>
+        WithFile(Encoding.GetEncoding(encoding), "# Café", path => Assert.Equal("# Café", PageFiles.Read(path)), bom);
+
+    [Fact]
+    public void RejectsFilesThatArentUtf8() =>
+        WithFile(Encoding.Latin1, "# Café", path => Assert.Contains("isn't UTF-8", Assert.Throws<McpException>(() => PageFiles.Read(path)).Message));
+
+    [Fact]
+    public void RejectsEmptyFiles() =>
+        WithFile(new UTF8Encoding(false), " \n", path => Assert.Contains("is empty", Assert.Throws<McpException>(() => PageFiles.Read(path)).Message));
+
+    private static void WithFile(Encoding encoding, string text, Action<string> test, bool bom = false)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}.md");
+        File.WriteAllBytes(path, [.. bom ? encoding.GetPreamble() : [], .. encoding.GetBytes(text)]);
+        try
+        {
+            test(path);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 
     [Fact]
     public void ReportsAMissingInputFile()
