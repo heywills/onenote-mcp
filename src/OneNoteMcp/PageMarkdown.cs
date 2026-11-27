@@ -56,7 +56,7 @@ public static partial class PageMarkdown
             writer.Image(img, "");
         }
 
-        return ($"# {title}\n\n{writer}".Trim(), writer.Images);
+        return ($"# {EscapeClosingHashes(Escape(title))}\n\n{writer}".Trim(), writer.Images);
     }
 
     /// <summary>
@@ -72,42 +72,43 @@ public static partial class PageMarkdown
         private int _codeStart;
         private string _codeIndent = "";
 
-        // The line prefix of the last quoted block, such as "> " or "  > ". Null when it wasn't quoted.
+        /// <summary>The line prefix of the last quoted block, such as <c>"> "</c> or <c>"  > "</c>. Null when it wasn't quoted.</summary>
         private string? _quotePrefix;
         private bool _topLevelBullet;
 
-        // Side-by-side outlines that both hold lists would read as one list, so the next outline uses other markers.
+        /// <summary>Use <c>*</c> and <c>1)</c> markers.</summary>
+        /// <remarks>Side-by-side outlines that both hold lists would read as one list.</remarks>
         private bool _altMarkers;
 
         public List<ImageRef> Images { get; } = [];
 
         public void NewOutline()
         {
-            if (_kind == "list")
-            {
-                _altMarkers = !_altMarkers;
-            }
+            _altMarkers = _kind == "list" && !_altMarkers;
 
             Separate(null);
         }
 
-        /// <param name="quotedParent">The enclosing list item is quoted, so the quote marker goes first.</param>
-        public void Block(XElement oeChildren, string indent, bool quotedParent = false)
+        /// <param name="quoteColumn">The indent where an enclosing quote's <c>"> "</c> sits. Null outside a quote.</param>
+        public void Block(XElement oeChildren, string indent, string? quoteColumn = null)
         {
             var number = 0;
             foreach (var oe in oeChildren.Elements(One + "OE"))
             {
                 number = oe.Element(One + "List")?.Element(One + "Number") is null ? 0 : number + 1;
-                Oe(oe, indent, number, quotedParent);
+                Oe(oe, indent, number, quoteColumn);
             }
         }
 
         /// <param name="number">Position in a numbered list, for items without OneNote's number text</param>
-        private void Oe(XElement oe, string indent, int number, bool quotedParent)
+        private void Oe(XElement oe, string indent, int number, string? quoteColumn)
         {
             var styleName = styles.GetValueOrDefault((string?)oe.Attribute("quickStyleIndex") ?? "") ?? "";
             var quote = styleName == "blockquote";
-            var prefix = !quote ? indent : quotedParent || indent.Length == 0 ? "> " + indent : indent + "> ";
+
+            // Inside an enclosing quote, "> " stays at that quote's column and the rest of the indent follows it.
+            quoteColumn = quote ? quoteColumn ?? indent : null;
+            var prefix = quoteColumn is null ? indent : quoteColumn + "> " + indent[quoteColumn.Length..];
             var list = oe.Element(One + "List");
 
             // OneNote's number text can be a letter or roman numeral ("a.", "iv."): Markdown takes digits only.
@@ -116,9 +117,7 @@ public static partial class PageMarkdown
                 ? (numberText is not null && NumberMarker().IsMatch(numberText) ? numberText[..^1] : $"{number}") + (_altMarkers ? ") " : ". ")
                 : list is not null ? (_altMarkers ? "* " : "- ") : null;
 
-            // OneNote splits a paragraph into several T runs, for example around the cursor. Read them as one.
-            var html = string.Concat(oe.Elements(One + "T").Select(t =>
-                t.Attribute("style") is { } style ? $"<span style=\"{style.Value}\">{t.Value}</span>" : t.Value));
+            var html = OeHtml(oe);
             var hasText = oe.Element(One + "T") is not null && oe != repeatedTitle;
 
             if (hasText && styleName == "code" && marker is null)
@@ -164,7 +163,7 @@ public static partial class PageMarkdown
                         break;
                     case "OEChildren":
                         // Only list items indent their children. Indented text elsewhere would read as code.
-                        Block(child, marker is null ? indent : indent + new string(' ', marker.Length), quote);
+                        Block(child, marker is null ? indent : indent + new string(' ', marker.Length), quoteColumn);
                         break;
                 }
             }
@@ -189,8 +188,8 @@ public static partial class PageMarkdown
             var rows = table.Elements(One + "Row").Select((row, r) => row.Elements(One + "Cell").Select(cell =>
             {
                 // The header row renders bold already
-                var text = string.Join(" ", cell.Descendants(One + "OE").SelectMany(oe => oe.Elements(One + "T").Select(t =>
-                    InlineMarkdown(t.Value, (string?)oe.Attribute("style") ?? "", ignoreUniformBold: r == 0).Trim())));
+                var text = string.Join(" ", cell.Descendants(One + "OE").Where(oe => oe.Element(One + "T") is not null).Select(oe =>
+                    InlineMarkdown(OeHtml(oe), (string?)oe.Attribute("style") ?? "", ignoreUniformBold: r == 0).Trim()));
                 return Whitespace().Replace(text, " ").Trim().Replace("|", "\\|");
             }).ToList()).ToList();
             if (rows.Count == 0)
@@ -361,7 +360,7 @@ public static partial class PageMarkdown
             }
             else if (tag == "a" && e.GetAttribute("href") is { } href && e.TextContent.Trim() == href && !href.Any(char.IsWhiteSpace))
             {
-                sb.Append(href); // OneNote links bare URLs: keep them bare
+                sb.Append(Escape(href)); // OneNote links bare URLs: keep them bare
             }
             else if (tag == "a")
             {
@@ -479,6 +478,13 @@ public static partial class PageMarkdown
     }
 
     /// <summary>
+    /// The OE's text as one HTML string.
+    /// </summary>
+    /// <remarks>OneNote splits a paragraph into several T runs, for example around the cursor, and a T can carry its own style.</remarks>
+    private static string OeHtml(XElement oe) => string.Concat(oe.Elements(One + "T").Select(t =>
+        t.Attribute("style") is { } style ? $"<span style=\"{System.Net.WebUtility.HtmlEncode(style.Value)}\">{t.Value}</span>" : t.Value));
+
+    /// <summary>
     /// Escapes a run of # at the end of heading text, which Markdown reads as a closing sequence.
     /// </summary>
     private static string EscapeClosingHashes(string text) => ClosingHashes().Replace(text, @"$1\$2");
@@ -499,9 +505,9 @@ public static partial class PageMarkdown
     [GeneratedRegex("font-family:[^;]*(consolas|courier|lucidaconsole|cascadia|menlo|monaco|sourcecode|firacode|firamono|jetbrainsmono|dejavusansmono|monospace)")]
     private static partial Regex Monospace();
 
-    // \ * ` always; ] before ( [ or : (a link or link definition); _ at word edges; < before a tag; ~ in pairs.
+    // \ * ` always; ] before ( [ or : (a link or link definition); _ at word edges; < before a tag; ~ in pairs; & before an entity.
     // A lone [x] stays: this output has no link definitions, so it can't become a link.
-    [GeneratedRegex(@"[\\*`]|\](?=[(\[:])|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])|<(?=[A-Za-z/!?])|~(?=~)|(?<=~)~")]
+    [GeneratedRegex(@"[\\*`]|\](?=[(\[:])|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])|<(?=[A-Za-z/!?])|~(?=~)|(?<=~)~|&(?=#?\w+;)")]
     private static partial Regex InlineSpecial();
 
     [GeneratedRegex(@"(?<!\\)[\[\]]")]

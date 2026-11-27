@@ -95,6 +95,13 @@ public class LiveTests
             ````
 
             [1\]: https://example.com
+
+            - a
+
+              > - b
+              >   - c
+
+            Use \&nbsp; but keep R&D, and see https://x.test/\_x\_/a
             """.Replace("\r\n", "\n");
 
         // OneNote numbers each list itself, from 1

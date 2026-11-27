@@ -29,6 +29,11 @@ public static class MarkdownToOneNote
         }
 
         var title = PlainText(inline).Trim();
+        if (title.Length == 0)
+        {
+            return (null, markdown);
+        }
+
         // The body starts on the line after the heading. The span can stop before a closing "#".
         var lineEnd = markdown.IndexOf('\n', heading.Span.End);
         return (title, lineEnd < 0 ? "" : markdown[(lineEnd + 1)..]);

@@ -87,6 +87,8 @@ public class MarkdownTests
     [InlineData(@"[1\]: https://example.com")]
     [InlineData(@"## Ticket \#")]
     [InlineData("#### Four\n\n###### Six")]
+    [InlineData("- a\n\n  > - b\n  >   - c")]
+    [InlineData(@"Use \&nbsp; or \&copy; but keep R&D")]
     public void RoundTripsEdgeCases(string markdown) =>
         Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
 
@@ -147,8 +149,50 @@ public class MarkdownTests
     }
 
     [Fact]
-    public void KeepsBareUrlsBare() =>
-        Assert.Equal("# P\n\nSee https://x.test/a_b", Read("<one:OE><one:T><![CDATA[See <a href=\"https://x.test/a_b\">https://x.test/a_b</a>]]></one:T></one:OE>"));
+    public void KeepsBareUrlsBareAndEscaped() =>
+        Assert.Equal(@"# P
+
+See https://x.test/a_b and https://x.test/\_x\_/a".Replace("\r\n", "\n"), Read(
+            "<one:OE><one:T><![CDATA[See <a href=\"https://x.test/a_b\">https://x.test/a_b</a> and <a href=\"https://x.test/_x_/a\">https://x.test/_x_/a</a>]]></one:T></one:OE>"));
+
+    [Theory]
+    [InlineData("Issue #", @"Issue \#")]
+    [InlineData("*Draft* notes", @"\*Draft\* notes")]
+    [InlineData("Using <b> tags", @"Using \<b> tags")]
+    public void EscapesThePageTitle(string title, string heading)
+    {
+        var markdown = PageMarkdown.Convert($"""<one:Page xmlns:one="{Ns}" name="{System.Security.SecurityElement.Escape(title)}"><one:Title/></one:Page>""").Markdown;
+
+        Assert.Equal($"# {heading}", markdown);
+        Assert.Equal(title, MarkdownToOneNote.SplitTitle(markdown).Title);
+    }
+
+    [Fact]
+    public void JoinsTextRunsInTableCells()
+    {
+        var xml = $"""
+            <one:Page xmlns:one="{Ns}" name="P"><one:Title/><one:Outline><one:OEChildren><one:OE><one:Table>
+              <one:Row><one:Cell><one:OEChildren><one:OE><one:T><![CDATA[H]]></one:T></one:OE></one:OEChildren></one:Cell></one:Row>
+              <one:Row><one:Cell><one:OEChildren><one:OE><one:T><![CDATA[plain ]]></one:T><one:T style="font-weight:bold"><![CDATA[bold]]></one:T></one:OE></one:OEChildren></one:Cell></one:Row>
+            </one:Table></one:OE></one:OEChildren></one:Outline></one:Page>
+            """;
+
+        Assert.Equal("# P\n\n| H |\n| --- |\n| plain **bold** |", PageMarkdown.Convert(xml).Markdown);
+    }
+
+    [Fact]
+    public void ResetsAlternateMarkersAfterANonListOutline()
+    {
+        static string Outline(string body) => $"<one:Outline><one:OEChildren>{body}</one:OEChildren></one:Outline>";
+        const string bullet = "<one:List><one:Bullet bullet=\"2\"/></one:List>";
+        var xml = $"""<one:Page xmlns:one="{Ns}" name="P"><one:Title/>{Outline($"<one:OE>{bullet}<one:T>a</one:T></one:OE>")}{Outline("<one:OE><one:T>para</one:T></one:OE>")}{Outline($"<one:OE>{bullet}<one:T>b</one:T></one:OE>")}</one:Page>""";
+
+        Assert.Equal("# P\n\n- a\n\npara\n\n- b", PageMarkdown.Convert(xml).Markdown);
+    }
+
+    [Fact]
+    public void TreatsAnEmptyHeadingAsNoTitle() =>
+        Assert.Null(MarkdownToOneNote.SplitTitle("#\n\nBody").Title);
 
     [Fact]
     public void EscapesBracketsInLinkText() =>
