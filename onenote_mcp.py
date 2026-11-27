@@ -4,12 +4,17 @@ Provides 13 tools for navigating, reading, searching, and analyzing
 OneNote content including embedded images and diagrams.
 """
 
+import base64
 import json
+import re
+import urllib.parse
+import xml.etree.ElementTree as ET
 
 from mcp.server.fastmcp import FastMCP, Image
 
 from onenote_lib import com_client
 from onenote_lib.config import config
+from onenote_lib.html_to_onenote import add_html_to_page
 from onenote_lib.image_handler import get_all_images, get_image_base64
 from onenote_lib.vision import describe_image, describe_images
 from onenote_lib.xml_parser import (
@@ -22,10 +27,15 @@ from onenote_lib.xml_parser import (
 
 mcp = FastMCP(
     "OneNote MCP",
-    description="Access OneNote desktop notebooks via COM automation. "
+    instructions="Access OneNote desktop notebooks via COM automation. "
     "Read, search, and analyze pages including embedded images.",
 )
 
+
+
+def _mcp_image(b64: str, media_type: str) -> Image:
+    """FastMCP Image takes raw bytes and a format, not base64 and a media type."""
+    return Image(data=base64.b64decode(b64), format=media_type.split("/")[-1])
 
 # ── Navigation Tools ─────────────────────────────────────────────────
 
@@ -133,6 +143,61 @@ def onenote_get_page(page_id: str) -> str:
     return markdown
 
 
+def _parse_page_link(link: str) -> tuple[str, str, str] | None:
+    """Parse a "Copy link to page" link into (match_mode, section_path, page_guid).
+
+    - onenote: link: match_mode "exact", section_path is the full .one URL
+    - Doc.aspx web link: match_mode "site", section_path is "<site URL>|<path in notebook>"
+    """
+    m = re.search(r"onenote:(https?://[^#\s]+?\.one)#\S*?page-id=\{?([0-9A-Fa-f-]{36})", link)
+    if m:
+        return "exact", urllib.parse.unquote(m.group(1)), m.group(2)
+    text = urllib.parse.unquote(link)
+    m = re.search(
+        r"(https?://[^\s]+?)/_layouts/[^\s]*?wd=target\((.+?\.one)\|[0-9A-Fa-f-]{36}/.*\|([0-9A-Fa-f-]{36})/\)",
+        text,
+    )
+    if m:
+        return "site", f"{m.group(1)}|{m.group(2)}", m.group(3)
+    return None
+
+
+@mcp.tool()
+def onenote_get_page_by_link(link: str) -> str:
+    """Get a page as markdown from its OneNote "Copy link to page" link.
+
+    Accepts the onenote: link, the https://.../_layouts/Doc.aspx web link, or both pasted together.
+    The notebook must be open in OneNote desktop. Output starts with the page ID for follow-up calls.
+
+    Args:
+        link: The link (or both links) from "Copy link to page"
+    """
+    parsed = _parse_page_link(link)
+    if not parsed:
+        return json.dumps({"error": "Not a OneNote page link"})
+    mode, section_path, page_guid = parsed
+
+    root = ET.fromstring(com_client.get_hierarchy("", com_client.SECTIONS))
+    candidates = []
+    for sec in root.iter("{http://schemas.microsoft.com/office/onenote/2013/onenote}Section"):
+        path = urllib.parse.unquote(sec.get("path", "")).lower()
+        if mode == "exact":
+            if path == section_path.lower():
+                candidates.append(sec.get("ID"))
+        else:
+            site, rel = section_path.lower().split("|", 1)
+            if path.startswith(site + "/") and path.endswith("/" + rel):
+                candidates.append(sec.get("ID"))
+    if not candidates:
+        return json.dumps({"error": "Section not found. Is the notebook open in OneNote desktop?"})
+
+    for section_id in candidates:
+        page_id = com_client.find_page_by_link_guid(section_id, page_guid)
+        if page_id:
+            return f"page_id: `{page_id}`\n\n" + onenote_get_page(page_id)
+    return json.dumps({"error": "Page not found in its section", "section_ids": candidates})
+
+
 @mcp.tool()
 def onenote_get_page_raw(page_id: str) -> str:
     """Get a page's raw OneNote XML content for debugging.
@@ -171,7 +236,7 @@ def onenote_get_page_images(
             result.append(f"[Image {img['index']}] Error: {img['error']}")
         else:
             result.append(f"[Image {img['index']}] (callback_id: {img['callback_id']})")
-            result.append(Image(data=img["base64"], media_type=img["media_type"]))
+            result.append(_mcp_image(img["base64"], img["media_type"]))
 
     return result
 
@@ -190,7 +255,7 @@ def onenote_get_image(
         max_size_kb: Maximum size in KB (default 512, image is resized if larger)
     """
     b64, media_type = get_image_base64(page_id, callback_id, max_size_kb)
-    return [Image(data=b64, media_type=media_type)]
+    return [_mcp_image(b64, media_type)]
 
 
 # ── Search Tools ─────────────────────────────────────────────────────
@@ -263,7 +328,7 @@ async def onenote_analyze_page_visuals(
                 result.append(f"Description: {img['description']}")
         else:
             result.append(f"[Image {img['index']}] Vision analysis: {img['description']}")
-            result.append(Image(data=img["base64"], media_type=img["media_type"]))
+            result.append(_mcp_image(img["base64"], img["media_type"]))
 
     return result
 
@@ -289,7 +354,7 @@ async def onenote_describe_image(
 
     return [
         f"Vision analysis: {description}",
-        Image(data=b64, media_type=media_type),
+        _mcp_image(b64, media_type),
     ]
 
 
@@ -304,15 +369,16 @@ def onenote_create_page(section_id: str, title: str, content_html: str = "") -> 
         section_id: The section's OneNote ID where the page will be created
         title: Page title
         content_html: Optional HTML content for the page body.
-            Use simple HTML: <p>, <b>, <i>, <ul>/<li>, <table>, <h1>-<h6>.
+            Block: <p>, <div>, <br>, <h1>-<h6>, <ul>/<ol>/<li> (nested OK), <table>/<tr>/<th>/<td>, <pre>, <hr>.
+            Inline: <b>, <i>, <u>, <s>, <sup>, <sub>, <code>, <a href>.
             Leave empty for a blank page.
     """
     ns = "http://schemas.microsoft.com/office/onenote/2013/onenote"
+    new_page_id = None
     try:
         new_page_id = com_client.create_new_page(section_id)
 
         if content_html or title:
-            import xml.etree.ElementTree as ET
             page_xml = com_client.get_page_content(new_page_id)
             root = ET.fromstring(page_xml)
             ns_map = {"one": ns}
@@ -322,11 +388,7 @@ def onenote_create_page(section_id: str, title: str, content_html: str = "") -> 
                 title_elem.text = title
 
             if content_html:
-                outline = ET.SubElement(root, f"{{{ns}}}Outline")
-                oe_children = ET.SubElement(outline, f"{{{ns}}}OEChildren")
-                oe = ET.SubElement(oe_children, f"{{{ns}}}OE")
-                t = ET.SubElement(oe, f"{{{ns}}}T")
-                t.text = content_html
+                add_html_to_page(root, content_html)
 
             updated_xml = ET.tostring(root, encoding="unicode", xml_declaration=True)
             com_client.update_page_content(updated_xml)
@@ -337,6 +399,12 @@ def onenote_create_page(section_id: str, title: str, content_html: str = "") -> 
             "title": title,
         })
     except Exception as e:
+        # Don't leave a blank "Untitled page" behind
+        if new_page_id:
+            try:
+                com_client.delete_hierarchy(new_page_id)
+            except Exception:
+                pass
         return json.dumps({"error": str(e)})
 
 
