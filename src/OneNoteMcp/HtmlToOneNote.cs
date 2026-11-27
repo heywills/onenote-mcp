@@ -93,7 +93,8 @@ public static partial class HtmlToOneNote
     /// Renders inline nodes as the HTML OneNote accepts inside <c>one:T</c>.
     /// </summary>
     /// <param name="inCode">Keep every space, as <c>&amp;nbsp;</c></param>
-    private static string InlineHtml(IEnumerable<INode> nodes, bool inCode = false)
+    /// <param name="inLink">Inside a link, where an image can only be its alt text</param>
+    private static string InlineHtml(IEnumerable<INode> nodes, bool inCode = false, bool inLink = false)
     {
         var sb = new StringBuilder();
         foreach (var n in nodes)
@@ -111,7 +112,8 @@ public static partial class HtmlToOneNote
                 continue;
             }
 
-            var inner = InlineHtml(e.ChildNodes, inCode || e.LocalName == "code");
+            var inner = InlineHtml(e.ChildNodes, inCode || e.LocalName == "code", inLink || e.LocalName == "a");
+            var alt = e.GetAttribute("alt") is { Length: > 0 } a ? a : e.GetAttribute("src") ?? "image";
             sb.Append(e.LocalName switch
             {
                 "b" or "strong" => $"<b>{inner}</b>",
@@ -120,16 +122,23 @@ public static partial class HtmlToOneNote
                 "s" or "strike" or "del" => $"<span style='text-decoration:line-through'>{inner}</span>",
                 "sup" or "sub" => $"<{e.LocalName}>{inner}</{e.LocalName}>",
                 "code" => $"<span style='font-family:Consolas'>{inner}</span>",
-                "a" => $"<a href=\"{WebUtility.HtmlEncode(e.GetAttribute("href") ?? "")}\">{inner}</a>",
+                "a" => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("href")))}\">{inner}</a>",
 
-                // OneNote can't load an image from a URL here: keep it as a link.
-                "img" => $"<a href=\"{WebUtility.HtmlEncode(e.GetAttribute("src") ?? "")}\">{WebUtility.HtmlEncode(e.GetAttribute("alt") is { Length: > 0 } alt ? alt : e.GetAttribute("src") ?? "image")}</a>",
+                // OneNote can't load an image from a URL here: keep it as a link, or its alt text inside a link.
+                "img" when inLink => WebUtility.HtmlEncode(alt),
+                "img" => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("src")))}\">{WebUtility.HtmlEncode(alt)}</a>",
                 _ => inner,
             });
         }
 
         return sb.ToString();
     }
+
+    /// <summary>
+    /// The link target, with backslashes back.
+    /// </summary>
+    /// <remarks>Markdig writes a backslash in a URL as <c>%5C</c>, which breaks <c>\\server\share</c> links in OneNote.</remarks>
+    private static string Href(string? href) => (href ?? "").Replace("%5C", "\\", StringComparison.OrdinalIgnoreCase);
 
     /// <param name="indexes">The page's QuickStyleDef indexes by name</param>
     /// <param name="nextIndex">The first free QuickStyleDef index</param>
@@ -258,7 +267,9 @@ public static partial class HtmlToOneNote
                             Oe(parent, ""); // keeps back-to-back code blocks apart
                         }
 
-                        foreach (var line in e.TextContent.Trim('\n').Split('\n'))
+                        // Only the final newline ends the code. Leading and inner blank lines are code.
+                        var codeText = e.TextContent.EndsWith('\n') ? e.TextContent[..^1] : e.TextContent;
+                        foreach (var line in codeText.Split('\n'))
                         {
                             var escaped = WebUtility.HtmlEncode(line.TrimEnd('\r')).Replace(" ", "&nbsp;");
                             Oe(parent, escaped.Length > 0 ? escaped : "&nbsp;", style: code);

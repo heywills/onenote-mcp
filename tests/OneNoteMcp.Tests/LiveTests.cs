@@ -94,14 +94,21 @@ public class LiveTests
             ```
             ````
 
-            [1\]: https://example.com
+            [1\]: <https://example.com>
 
             - a
 
               > - b
               >   - c
 
-            Use \&nbsp; but keep R&D, and see https://x.test/\_x\_/a
+            Use \&nbsp; but keep R&D, and see <https://x.test/_x_/a>
+
+            [Spec](\\\\fileserver\\share\\spec.docx)
+
+            ```
+
+            leading blank line
+            ```
 
             1. one
             2. two
@@ -124,8 +131,9 @@ public class LiveTests
             """.Replace("\r\n", "\n");
 
         // OneNote numbers each list itself, from 1
-        // Images become links
-        var expected = markdown.Replace("3. Starts at three\n4. Four", "1. Starts at three\n2. Four").Replace("- ![screenshot]", "- [screenshot]");
+        // Images become links, and OneNote stores a \\server\share link as file://server/share
+        var expected = markdown.Replace("3. Starts at three\n4. Four", "1. Starts at three\n2. Four").Replace("- ![screenshot]", "- [screenshot]")
+            .Replace(@"(\\\\fileserver\\share\\spec.docx)", "(file://fileserver/share/spec.docx)");
         WithPage(markdown, pageId => Assert.Equal(expected, _tools.GetPage(pageId)));
     }
 

@@ -48,7 +48,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
   - Numbered lists start at 1. OneNote numbers lists itself, so separate lists alternate between `1.` and `1)` in OneNote to restart.
   - A hard line break inside a paragraph splits it into two paragraphs. OneNote drops line breaks inside a paragraph.
   - Images become links. Code blocks lose their language.
-  - Headings, tables, and code inside a quote lose the quote.
+  - Headings, tables, and code inside a quote lose the quote. Nested quotes flatten to one level.
   - Bold that covers a whole table header cell is dropped, since the header row is already bold. So is italic that covers a whole h4 or h6 heading, since those styles are italic.
 
 ## Tests

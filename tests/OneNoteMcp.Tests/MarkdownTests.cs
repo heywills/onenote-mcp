@@ -126,10 +126,19 @@ public class MarkdownTests
     public void ListItemWithoutTextKeepsItsMarkerAndNesting()
     {
         const string bullet = "<one:List><one:Bullet bullet=\"2\"/></one:List>";
-        Assert.Equal("# P\n\n- a\n-\n\n  [Image 1]\n\n- c", Read(
-            $"<one:OE>{bullet}<one:T>a</one:T></one:OE><one:OE>{bullet}<one:Image><one:CallbackID callbackID=\"cb\"/></one:Image></one:OE><one:OE>{bullet}<one:T>c</one:T></one:OE>"));
-        Assert.Equal("# P\n\n1.\n\n   child", Read(
+        var markdown = Read(
+            $"<one:OE>{bullet}<one:T>a</one:T></one:OE><one:OE>{bullet}<one:Image><one:CallbackID callbackID=\"cb\"/></one:Image></one:OE><one:OE>{bullet}<one:T>c</one:T></one:OE>");
+
+        // No blank line after a bare marker: "-\n\n  x" would end the item before x.
+        Assert.Equal("# P\n\n- a\n-\n  [Image 1]\n\n- c", markdown);
+        Assert.Equal("<ul>\n<li><p>a</p>\n</li>\n<li><p>[Image 1]</p>\n</li>\n<li><p>c</p>\n</li>\n</ul>",
+            MarkdownToOneNote.ToHtml(markdown.Split("\n\n", 2)[1]).Trim());
+
+        Assert.Equal("# P\n\n1.\n   child", Read(
             "<one:OE><one:List><one:Number numberSequence=\"0\" numberFormat=\"##.\" text=\"1.\"/></one:List><one:OEChildren><one:OE><one:T><![CDATA[child]]></one:T></one:OE></one:OEChildren></one:OE>"));
+
+        // A truly empty item keeps the blank line before what follows
+        Assert.Equal("# P\n\n- a\n-\n\nafter", Read($"<one:OE>{bullet}<one:T>a</one:T></one:OE><one:OE>{bullet}<one:T></one:T></one:OE><one:OE><one:T>after</one:T></one:OE>"));
     }
 
     [Fact]
@@ -214,11 +223,29 @@ public class MarkdownTests
     }
 
     [Fact]
-    public void KeepsBareUrlsBareAndEscaped() =>
-        Assert.Equal(@"# P
-
-See https://x.test/a_b and https://x.test/\_x\_/a".Replace("\r\n", "\n"), Read(
+    public void WritesBareUrlsAsAutolinks() =>
+        Assert.Equal("# P\n\nSee <https://x.test/a_b> and <https://x.test/_x_/a>", Read(
             "<one:OE><one:T><![CDATA[See <a href=\"https://x.test/a_b\">https://x.test/a_b</a> and <a href=\"https://x.test/_x_/a\">https://x.test/_x_/a</a>]]></one:T></one:OE>"));
+
+    [Theory]
+    [InlineData(@"[Spec](\\\\fileserver\\share\\spec.docx) and [C](file:///C:\\_x)")]
+    [InlineData("<https://x.test/_x_/a>")]
+    [InlineData("```\n```\n\nafter\n\n```\n\nx\n\n```")]
+    public void RoundTripsLinksAndCodeBlankLines(string markdown) =>
+        Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
+
+    [Fact]
+    public void WritesAnchorsWithoutAHrefAsText() =>
+        Assert.Equal("# P\n\nTop of page", Read("<one:OE><one:T><![CDATA[<a name=\"top\">Top</a> of page]]></one:T></one:OE>"));
+
+    [Fact]
+    public void LinkedImageBecomesItsAltTextInsideTheLink()
+    {
+        var page = new XElement(XName.Get("Page", Ns));
+        HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml("[![logo](https://x/l.png)](https://x)"));
+
+        Assert.Equal("<a href=\"https://x\">logo</a>", page.Descendants(XName.Get("T", Ns)).Single().Value);
+    }
 
     [Theory]
     [InlineData("Issue #", @"Issue \#")]

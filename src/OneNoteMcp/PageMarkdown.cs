@@ -76,6 +76,10 @@ public static partial class PageMarkdown
         private string? _quotePrefix;
         private bool _topLevelBullet;
 
+        /// <summary>The last line is a list marker with no text.</summary>
+        /// <remarks>Its content must follow on the next line: a blank line after a bare marker ends the item.</remarks>
+        private bool _bareMarker;
+
         /// <summary>Use <c>*</c> and <c>1)</c> markers.</summary>
         /// <remarks>Side-by-side outlines that both hold lists would read as one list.</remarks>
         private bool _altMarkers;
@@ -181,6 +185,12 @@ public static partial class PageMarkdown
                         break;
                 }
             }
+
+            // A truly empty item: what follows isn't its content
+            if (listItem && _lines.Count > 0 && _lines[^1] == (prefix + marker).TrimEnd())
+            {
+                _bareMarker = false;
+            }
         }
 
         public void Image(XElement img, string indent)
@@ -265,17 +275,13 @@ public static partial class PageMarkdown
             _lines.Add((prefix + marker + text).TrimEnd());
             _kind = "list";
             _quotePrefix = quote ? prefix : null;
+            _bareMarker = text.Length == 0;
         }
 
         private void CodeLine(string indent, string text)
         {
             if (_kind != "code")
             {
-                if (text.Trim().Length == 0)
-                {
-                    return; // a blank code line outside a block
-                }
-
                 ResetMarkersAtTopLevel(indent);
                 Separate(null);
                 _codeIndent = indent;
@@ -326,13 +332,19 @@ public static partial class PageMarkdown
             if (_kind == "code")
             {
                 // A fence longer than any backtick run that starts a line inside the block
+                // An empty block is one blank code line in OneNote
+                if (_lines.Skip(_codeStart + 1).All(l => l.Trim().Length == 0))
+                {
+                    _lines.RemoveRange(_codeStart + 1, _lines.Count - _codeStart - 1);
+                }
+
                 var longest = _lines.Skip(_codeStart + 1).Select(l => l.TrimStart().TakeWhile(c => c == '`').Count()).DefaultIfEmpty(0).Max();
                 var fence = _codeIndent + new string('`', Math.Max(3, longest + 1));
                 _lines[_codeStart] = fence;
                 _lines.Add(fence);
             }
 
-            if (_lines.Count > 0 && _lines[^1].Length > 0)
+            if (_lines.Count > 0 && _lines[^1].Length > 0 && !(_bareMarker && _kind == "list"))
             {
                 _lines.Add(nextQuotePrefix is not null && _quotePrefix is not null && _kind != "code" ? nextQuotePrefix.TrimEnd() : "");
             }
@@ -416,9 +428,13 @@ public static partial class PageMarkdown
             {
                 sb.Append(' ');
             }
-            else if (tag == "a" && e.GetAttribute("href") is { } href && e.TextContent.Trim() == href && !href.Any(char.IsWhiteSpace))
+            else if (tag == "a" && e.GetAttribute("href") is { } href && e.TextContent.Trim() == href && AutolinkUrl().IsMatch(href))
             {
-                sb.Append(Escape(href)); // OneNote links bare URLs: keep them bare
+                sb.Append($"<{href}>"); // OneNote links bare URLs. An autolink needs no escaping.
+            }
+            else if (tag == "a" && string.IsNullOrEmpty(e.GetAttribute("href")))
+            {
+                sb.Append(inner); // an anchor, not a link
             }
             else if (tag == "a")
             {
@@ -558,9 +574,10 @@ public static partial class PageMarkdown
     /// <summary>
     /// A link destination Markdown reads as one: angle brackets around one with spaces or parentheses.
     /// </summary>
+    /// <remarks>Backslashes are doubled: Markdown reads one before punctuation as an escape, which breaks \\server\share links.</remarks>
     private static string LinkDestination(string href)
     {
-        href = href.Replace("<", "%3C").Replace(">", "%3E");
+        href = href.Replace("\\", "\\\\").Replace("<", "%3C").Replace(">", "%3E");
         return href.IndexOfAny([' ', '(', ')']) >= 0 ? $"<{href}>" : href;
     }
 
@@ -643,6 +660,10 @@ public static partial class PageMarkdown
     // Our ― rule, or an underscore line like Outlook's (escaped by now)
     [GeneratedRegex(@"^(―|\\_){3,}$")]
     private static partial Regex HorizontalRule();
+
+    // A URL a CommonMark autolink can hold: a scheme, and no spaces, angle brackets, or backslashes
+    [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>\\]*$")]
+    private static partial Regex AutolinkUrl();
 
     // OneNote's number text: 1. or 1)
     [GeneratedRegex(@"^(\d+)[.)]$")]
