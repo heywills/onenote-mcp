@@ -211,6 +211,38 @@ public class LiveTests
             }
         });
 
+    [LiveFact]
+    public void CreatesATitleOnlyPageFromMarkdown() =>
+        WithCreated(_tools.CreatePageFromMarkdown(SectionId(), title: "Live title-only test (deleting now)"), pageId =>
+            Assert.Equal("# Live title-only test (deleting now)", _tools.GetPage(pageId, inline: true)));
+
+    // A page saved to a file comes back as the same Markdown when created from that file
+    [LiveFact]
+    public void CreatesPagesFromFiles() =>
+        WithPage($"# Live input test (deleting now)\n\n{MarkdownTests.Sample}", pageId =>
+        {
+            var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+            try
+            {
+                var markdown = Path.Combine(folder, "page.md");
+                _tools.GetPage(pageId, markdown);
+                WithCreated(_tools.CreatePageFromMarkdown(SectionId(), inputPath: markdown), copyId =>
+                    Assert.Equal(_tools.GetPage(pageId, inline: true), _tools.GetPage(copyId, inline: true)));
+
+                var html = Path.Combine(folder, "page.html");
+                File.WriteAllText(html, "<p><b>Bold</b> from a file</p>");
+                WithCreated(_tools.CreatePage(SectionId(), "Live HTML input test (deleting now)", inputPath: html), copyId =>
+                    Assert.Contains("**Bold** from a file", _tools.GetPage(copyId, inline: true)));
+            }
+            finally
+            {
+                if (Directory.Exists(folder))
+                {
+                    Directory.Delete(folder, recursive: true);
+                }
+            }
+        });
+
     // OneNote stores a page link in its own relative form; the reader turns it back into one get_page_by_link opens.
     // The title has & # % : "Copy link to page" drops & and #, and the link still opens.
     [LiveFact]
@@ -275,9 +307,12 @@ public class LiveTests
         Assert.InRange(image.DecodedData.Length, 1, 64 * 1024);
     }
 
-    private void WithPage(string markdown, Action<string> test)
+    private void WithPage(string markdown, Action<string> test) => WithCreated(_tools.CreatePageFromMarkdown(SectionId(), markdown), test);
+
+    /// <param name="created">A create tool's result</param>
+    private void WithCreated(string created, Action<string> test)
     {
-        var pageId = JsonDocument.Parse(_tools.CreatePageFromMarkdown(SectionId(), markdown)).RootElement.GetProperty("page_id").GetString()!;
+        var pageId = JsonDocument.Parse(created).RootElement.GetProperty("page_id").GetString()!;
         try
         {
             test(pageId);

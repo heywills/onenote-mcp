@@ -25,6 +25,8 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 
 `onenote_get_page`, `onenote_get_page_by_link`, and `onenote_get_page_raw` save to `outputPath`, an absolute file path the agent names, and return the path. `inline=true` returns the page in the response instead.
 
+`onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path.
+
 ## Requirements
 
 - Windows with OneNote desktop (Microsoft 365), not the Store version. COM starts OneNote if it's closed.

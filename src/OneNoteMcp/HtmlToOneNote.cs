@@ -39,12 +39,17 @@ public static partial class HtmlToOneNote
     private static readonly HashSet<string> Inline =
         ["b", "strong", "i", "em", "u", "s", "strike", "del", "sup", "sub", "a", "span", "code", "img"];
 
+    /// <summary>Elements whose text a page never shows, such as those from a saved web page's head</summary>
+    private static readonly HashSet<string> NonContent =
+        ["script", "style", "title", "template", "meta", "link", "noscript", "noframes", "iframe"];
+
     /// <summary>
     /// Appends <paramref name="html"/> to a page as an Outline, and adds the styles it needs.
     /// </summary>
     /// <param name="fromMarkdown">The HTML came from Markdown, whose table code keeps <c>\|</c> for a pipe</param>
     public static void AddToPage(XElement page, string html, bool fromMarkdown = false)
     {
+        // Parsed as body content even for a whole document: the parser ignores stray html, head, and body tags
         var body = new HtmlParser().ParseDocument($"<body>{html}</body>").Body!;
         var defs = page.Elements(One + "QuickStyleDef").ToList();
 
@@ -110,7 +115,7 @@ public static partial class HtmlToOneNote
                 continue;
             }
 
-            if (n is not IElement e)
+            if (n is not IElement e || NonContent.Contains(e.LocalName))
             {
                 continue;
             }
@@ -234,7 +239,8 @@ public static partial class HtmlToOneNote
                     continue;
                 }
 
-                if (n is not IElement e)
+                // Skipped without a flush, so a script mid-paragraph doesn't split it
+                if (n is not IElement e || NonContent.Contains(e.LocalName))
                 {
                     continue;
                 }
