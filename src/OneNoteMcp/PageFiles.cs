@@ -80,13 +80,19 @@ public static partial class PageFiles
 
     /// <summary>Writes UTF-8 without a byte-order mark, creating missing folders.</summary>
     /// <returns>The full path written</returns>
-    public static string Write(string path, string content)
+    public static string Write(string path, string content) => Write(path, full => File.WriteAllText(full, content));
+
+    /// <summary>Writes bytes, creating missing folders.</summary>
+    /// <returns>The full path written</returns>
+    public static string Write(string path, byte[] content) => Write(path, full => File.WriteAllBytes(full, content));
+
+    private static string Write(string path, Action<string> write)
     {
         try
         {
             var full = Path.GetFullPath(path);
             Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-            File.WriteAllText(full, content);
+            write(full);
             return full;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)

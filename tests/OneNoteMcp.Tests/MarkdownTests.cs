@@ -142,6 +142,22 @@ public class MarkdownTests
     }
 
     [Fact]
+    public void WritesImagesAsTheCallerAsks()
+    {
+        var xml = $"""<one:Page xmlns:one="{Ns}" name="P"><one:Title/><one:Outline><one:OEChildren><one:OE><one:Image><one:CallbackID callbackID="cb"/></one:Image></one:OE></one:OEChildren></one:Outline></one:Page>""";
+        var link = PageMarkdown.LinkDestination("My page_images/image-1.png");
+        Assert.Equal("# P\n\n![Image 1](<My page_images/image-1.png>)", PageMarkdown.Convert(xml, img => $"![Image {img.Index}]({link})").Markdown);
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0x89, 0x50, 0x4E, 0x47 }, "png")]
+    [InlineData(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }, "jpg")]
+    [InlineData(new byte[] { 0x49, 0x49, 0x2A, 0x00 }, "tif")]
+    [InlineData(new byte[] { 0x00, 0x01 }, "bin")]
+    public void PicksImageExtensions(byte[] data, string extension) =>
+        Assert.Equal(extension, Images.Extension(data));
+
+    [Fact]
     public void RepeatsThePlaceholderForAnImageShownAgain() =>
         Assert.Equal("# P\n\n[Image 1]\n\nbetween\n\n[Image 1]", Read(
             "<one:OE><one:Image><one:CallbackID callbackID=\"cb\"/></one:Image></one:OE><one:OE><one:T>between</one:T></one:OE><one:OE><one:Image><one:CallbackID callbackID=\"cb\"/></one:Image></one:OE>"));

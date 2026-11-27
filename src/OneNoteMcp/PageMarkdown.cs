@@ -23,7 +23,8 @@ public static partial class PageMarkdown
 {
     private static readonly HtmlParser Parser = new();
 
-    public static (string Markdown, IReadOnlyList<ImageRef> Images) Convert(string xml)
+    /// <param name="imageMarkdown">The Markdown for each image. Default: <c>[Image N]</c>.</param>
+    public static (string Markdown, IReadOnlyList<ImageRef> Images) Convert(string xml, Func<ImageRef, string>? imageMarkdown = null)
     {
         var root = XElement.Parse(xml);
         var title = (string?)root.Attribute("name") ?? (string?)root.Attribute("ID") ?? "Untitled";
@@ -41,7 +42,7 @@ public static partial class PageMarkdown
             repeatedTitle = null;
         }
 
-        var writer = new Writer(styles, repeatedTitle);
+        var writer = new Writer(styles, repeatedTitle, imageMarkdown ?? (img => $"[Image {img.Index}]"));
         foreach (var outline in root.Descendants(One + "Outline"))
         {
             writer.NewOutline();
@@ -66,7 +67,7 @@ public static partial class PageMarkdown
     public static string CleanText(string text) =>
         System.Net.WebUtility.HtmlDecode(Tags().Replace(text, "")).Replace('\u00A0', ' ');
 
-    private sealed class Writer(Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle)
+    private sealed class Writer(Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle, Func<ImageRef, string> imageMarkdown)
     {
         private readonly List<string> _lines = [];
         private string _kind = "";
@@ -261,7 +262,7 @@ public static partial class PageMarkdown
                 Images.Add(reference);
             }
 
-            Paragraph(prefix, $"[Image {reference.Index}]", quote);
+            Paragraph(prefix, imageMarkdown(reference), quote);
         }
 
         private void Table(XElement table, string indent)
@@ -778,7 +779,7 @@ public static partial class PageMarkdown
     /// - Backslashes are doubled: Markdown reads one before punctuation as an escape, which breaks \\server\share links.
     /// - OneNote page links come back in the "Copy link to page" form.
     /// </remarks>
-    private static string LinkDestination(string href)
+    public static string LinkDestination(string href)
     {
         href = OneNoteLink(href).Replace("\\", "\\\\").Replace("<", "%3C").Replace(">", "%3E");
         return href.IndexOfAny([' ', '(', ')']) >= 0 ? $"<{href}>" : href;

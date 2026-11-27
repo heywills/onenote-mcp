@@ -20,6 +20,15 @@ public static class Images
         _ => "application/octet-stream",
     };
 
+    /// <summary>The file extension for the image's type, without the dot</summary>
+    public static string Extension(ReadOnlySpan<byte> data) => MimeType(data) switch
+    {
+        "image/jpeg" => "jpg",
+        "image/tiff" => "tif",
+        "application/octet-stream" => "bin",
+        var mime => mime["image/".Length..],
+    };
+
     /// <summary>
     /// Returns the image as is when it fits in <paramref name="maxKb"/>, or a smaller PNG.
     /// </summary>

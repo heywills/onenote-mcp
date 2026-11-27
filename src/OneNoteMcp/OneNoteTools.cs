@@ -14,6 +14,11 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
 {
     private const int DefaultMaxImageKb = 512;
     private const string OutputPathDescription = "Absolute path of the file to save, such as C:\\work\\page.md. Overwrites it. Required unless inline is true.";
+    private const string GetPageDescription = """
+        Save a page as Markdown to outputPath, with its images in a "<file name>_images" folder next to it, linked from the Markdown.
+        Or return it with inline=true, where images are listed as [Image N] with callback IDs for onenote_get_image.
+        """;
+
     private const string InlineDescription = "Return the content in the response instead of saving a file. Don't pass outputPath with it.";
 
     private static readonly JsonSerializerOptions Json = new()
@@ -64,14 +69,57 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     // Content
 
     [McpServerTool(Name = "onenote_get_page", ReadOnly = false, Destructive = true)]
-    [Description("Save a page as Markdown to outputPath, or return it with inline=true. Images are listed as [Image N] with callback IDs for onenote_get_image.")]
+    [Description(GetPageDescription)]
     public string GetPage(
         [Description("The page ID, from onenote_list_pages or a search")] string pageId,
         [Description(OutputPathDescription)] string outputPath = "",
         [Description(InlineDescription)] bool inline = false)
     {
         CheckOutput(outputPath, inline);
-        return Output(PageText(pageId), outputPath, inline, pageId);
+        return inline ? PageText(pageId) : SavePage(pageId, outputPath);
+    }
+
+    /// <summary>Saves the page as Markdown, with its images in a <c>&lt;file name&gt;_images</c> folder next to it.</summary>
+    /// <remarks>
+    /// - An image OneNote hasn't downloaded stays as <c>[Image N: not downloaded]</c>, so one missing image doesn't fail the save.
+    /// - Images are saved full size. Saving again overwrites them.
+    /// </remarks>
+    private string SavePage(string pageId, string outputPath)
+    {
+        var xml = oneNote.GetPageContent(pageId);
+        var (_, images) = PageMarkdown.Convert(xml);
+        var folder = Path.GetFileNameWithoutExtension(outputPath) + "_images";
+        var links = images.ToDictionary(img => img.CallbackId, img => SaveImage(pageId, img, outputPath, folder));
+        var (markdown, _) = PageMarkdown.Convert(xml, img => links[img.CallbackId] is { } link
+            ? $"![Image {img.Index}]({PageMarkdown.LinkDestination(link)})"
+            : $"[Image {img.Index}: not downloaded]");
+
+        return ToJson(new
+        {
+            Status = "saved",
+            Path = PageFiles.Write(outputPath, markdown),
+            PageId = pageId,
+            Images = links.Values.Count(l => l is not null),
+            MissingImages = links.Values.Count(l => l is null),
+        });
+    }
+
+    /// <returns>The image's path relative to the page file, or null when OneNote can't return it</returns>
+    private string? SaveImage(string pageId, ImageRef img, string outputPath, string folder)
+    {
+        byte[] data;
+        try
+        {
+            data = oneNote.GetBinaryPageContent(pageId, img.CallbackId);
+        }
+        catch (McpException)
+        {
+            return null;
+        }
+
+        var name = $"image-{img.Index}.{Images.Extension(data)}";
+        PageFiles.Write(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outputPath))!, folder, name), data);
+        return $"{folder}/{name}";
     }
 
     private string PageText(string pageId)
@@ -94,7 +142,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     [Description("""
         Get a page as Markdown from its OneNote "Copy link to page" link.
         Accepts the onenote: link, the https://.../_layouts/Doc.aspx web link, or both pasted together.
-        The notebook must be open in OneNote desktop. Saves to outputPath, or returns it with inline=true. Either way, the result has the page ID for follow-up calls.
+        The notebook must be open in OneNote desktop. Saves to outputPath with its images, like onenote_get_page, or returns it with inline=true. Either way, the result has the page ID for follow-up calls.
         """)]
     public string GetPageByLink(
         [Description("The link, or both links, from \"Copy link to page\"")] string link,
@@ -103,7 +151,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     {
         CheckOutput(outputPath, inline);
         var pageId = FindPageByLink(link);
-        return inline ? $"page_id: `{pageId}`\n\n{PageText(pageId)}" : Output(PageText(pageId), outputPath, inline, pageId);
+        return inline ? $"page_id: `{pageId}`\n\n{PageText(pageId)}" : SavePage(pageId, outputPath);
     }
 
     private string FindPageByLink(string link)
