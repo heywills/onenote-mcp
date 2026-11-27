@@ -80,7 +80,10 @@ public static partial class PageMarkdown
             var style = styles.TryGetValue((string?)oe.Attribute("quickStyleIndex") ?? "", out var s) ? s : (Name: "", Font: "");
             var oeStyle = ((string?)oe.Attribute("style") ?? "") + ";" + (style.Font.Length > 0 ? $"font-family:{style.Font}" : "");
             var list = oe.Element(One + "List");
-            var marker = list?.Element(One + "Number") is { } numberElement ? ((string?)numberElement.Attribute("text") ?? $"{number}.") + " "
+            // OneNote's number text can be a letter or roman numeral ("a.", "iv."): Markdown takes digits only.
+            var numberText = (string?)list?.Element(One + "Number")?.Attribute("text");
+            var marker = list?.Element(One + "Number") is not null
+                ? (numberText is not null && NumberMarker().IsMatch(numberText) ? numberText : $"{number}.") + " "
                 : list is not null ? "- " : null;
 
             foreach (var t in oe.Elements(One + "T"))
@@ -97,7 +100,9 @@ public static partial class PageMarkdown
                 else if (!string.IsNullOrWhiteSpace(text))
                 {
                     var level = Regex.Match(style.Name, "^h([1-6])$");
-                    Paragraph(indent, level.Success ? $"{new string('#', int.Parse(level.Groups[1].Value))} {text.Trim()}" : text.Trim());
+                    Paragraph(indent, level.Success ? $"{new string('#', int.Parse(level.Groups[1].Value))} {text.Trim()}"
+                        : style.Name == "blockquote" ? $"> {Unwrap(text.Trim(), "*")}" // OneNote copies the style's italic onto the text
+                        : EscapeLineStart(text.Trim()));
                 }
             }
 
@@ -309,7 +314,8 @@ public static partial class PageMarkdown
                     }
                 }
 
-                sb.Append(Whitespace().Replace(text, " "));
+                text = Whitespace().Replace(text, " ");
+                sb.Append(inCode ? text : EscapeInline(text));
                 continue;
             }
 
@@ -368,10 +374,34 @@ public static partial class PageMarkdown
         return $"{lead}{marker}{core}{marker}{trail}";
     }
 
+    private static string Unwrap(string text, string marker) =>
+        text.Length > marker.Length * 2 && text.StartsWith(marker) && text.EndsWith(marker) ? text[marker.Length..^marker.Length] : text;
+
     private static (bool Bold, bool Italic, bool Strike, bool Code) StyleOf(string css)
     {
         var s = css.ToLowerInvariant().Replace(" ", "").Replace("\n", "").Replace("\r", "");
         return (s.Contains("font-weight:bold"), s.Contains("font-style:italic"), s.Contains("line-through"), Monospace().IsMatch(s));
+    }
+
+    /// <summary>
+    /// Escapes characters that would read as Markdown formatting: <c>\ * `</c> everywhere, <c>_</c> at word edges.
+    /// </summary>
+    private static string EscapeInline(string text) => InlineSpecial().Replace(text, @"\$0");
+
+    /// <summary>
+    /// Escapes a line start that would read as a heading, list, or quote.
+    /// </summary>
+    private static string EscapeLineStart(string text)
+    {
+        var m = NumberedLineStart().Match(text);
+        if (m.Success)
+        {
+            return $"{m.Groups[1].Value}\\{text[m.Groups[1].Length..]}";
+        }
+
+        return text.Length > 0 && "#->+".Contains(text[0]) && (text.Length == 1 || text[1] == ' ' || text[0] == '#')
+            ? "\\" + text
+            : text;
     }
 
     private static double? ToDouble(XAttribute? a) =>
@@ -385,4 +415,13 @@ public static partial class PageMarkdown
 
     [GeneratedRegex("font-family:[^;]*(consolas|courier|mono)")]
     private static partial Regex Monospace();
+
+    [GeneratedRegex(@"[\\*`]|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])")]
+    private static partial Regex InlineSpecial();
+
+    [GeneratedRegex(@"^(\d+)[.)](\s|$)")]
+    private static partial Regex NumberedLineStart();
+
+    [GeneratedRegex(@"^\d+\.$")]
+    private static partial Regex NumberMarker();
 }

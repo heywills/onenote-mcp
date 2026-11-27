@@ -43,7 +43,24 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 
 - Search uses Windows Search, so it finds indexed pages only.
 - Images OneNote hasn't downloaded yet return an error. Open the page in OneNote desktop, then retry.
-- Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
+- Markdown that OneNote can't hold:
+  - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
+  - Numbered lists start at 1. OneNote numbers lists itself.
+  - Images become links. Code blocks lose their language.
+
+## Tests
+
+```powershell
+dotnet test
+```
+
+Live tests run against OneNote desktop when `ONENOTE_LIVE_SECTION` is set. They create pages in that section and delete them permanently.
+
+```powershell
+$env:ONENOTE_LIVE_SECTION = "My Notebook/Test section"; dotnet test
+```
+
+Set `ONENOTE_LIVE_IMAGE_LINK` to a "Copy link to page" link to also test images.
 
 ## How it works
 

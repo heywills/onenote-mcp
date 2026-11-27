@@ -21,52 +21,56 @@ namespace OneNoteMcp;
 /// </remarks>
 public static partial class HtmlToOneNote
 {
-    // OneNote's built-in heading styles: (font size, color, italic)
-    private static readonly Dictionary<int, (string Size, string Color, bool Italic)> HeadingStyles = new()
+    // OneNote's built-in styles: (font size, color, italic)
+    private static readonly Dictionary<string, (string Size, string Color, bool Italic)> Styles = new()
     {
-        [1] = ("16.0", "#1E4E79", false),
-        [2] = ("14.0", "#2E75B5", false),
-        [3] = ("12.0", "#5B9BD5", false),
-        [4] = ("12.0", "#5B9BD5", true),
-        [5] = ("11.0", "#2E75B5", false),
-        [6] = ("11.0", "#2E75B5", true),
+        ["h1"] = ("16.0", "#1E4E79", false),
+        ["h2"] = ("14.0", "#2E75B5", false),
+        ["h3"] = ("12.0", "#5B9BD5", false),
+        ["h4"] = ("12.0", "#5B9BD5", true),
+        ["h5"] = ("11.0", "#2E75B5", false),
+        ["h6"] = ("11.0", "#2E75B5", true),
+        ["blockquote"] = ("11.0", "#595959", true),
     };
 
     private static readonly HashSet<string> Inline =
-        ["b", "strong", "i", "em", "u", "s", "strike", "del", "sup", "sub", "a", "span", "code"];
+        ["b", "strong", "i", "em", "u", "s", "strike", "del", "sup", "sub", "a", "span", "code", "img"];
 
     /// <summary>
-    /// Appends <paramref name="html"/> to a page as an Outline, and adds the heading styles it needs.
+    /// Appends <paramref name="html"/> to a page as an Outline, and adds the styles it needs.
     /// </summary>
     public static void AddToPage(XElement page, string html)
     {
         var body = new HtmlParser().ParseDocument($"<body>{html}</body>").Body!;
-        var builder = new Builder();
+        var defs = page.Elements(One + "QuickStyleDef").ToList();
+
+        // Reuse the page's styles by name. New ones get the next free indexes.
+        var indexes = defs.Where(d => d.Attribute("name") is not null)
+            .GroupBy(d => (string)d.Attribute("name")!)
+            .ToDictionary(g => g.Key, g => int.Parse((string?)g.First().Attribute("index") ?? "0"));
+        var builder = new Builder(indexes, defs.Select(d => int.TryParse((string?)d.Attribute("index"), out var i) ? i : 0).DefaultIfEmpty(-1).Max() + 1);
+
         var outline = new XElement(One + "Outline");
         var children = new XElement(One + "OEChildren");
         outline.Add(children);
         builder.Blocks(body.ChildNodes, children);
 
-        // QuickStyleDef index = heading level. It must sit with the other QuickStyleDefs.
-        var defs = page.Elements(One + "QuickStyleDef").ToList();
-        var existing = defs.Select(d => (string?)d.Attribute("index")).ToHashSet();
-        var newDefs = builder.Headings.Order()
-            .Where(level => !existing.Contains(level.ToString()))
-            .Select(level =>
+        // QuickStyleDefs must sit together, before the content.
+        var newDefs = builder.NewStyles.Select(style =>
+        {
+            var (size, color, italic) = Styles[style.Name];
+            var def = new XElement(One + "QuickStyleDef",
+                new XAttribute("index", style.Index), new XAttribute("name", style.Name),
+                new XAttribute("fontColor", color), new XAttribute("highlightColor", "automatic"),
+                new XAttribute("font", "Calibri"), new XAttribute("fontSize", size),
+                new XAttribute("spaceBefore", "0.0"), new XAttribute("spaceAfter", "0.0"));
+            if (italic)
             {
-                var (size, color, italic) = HeadingStyles[level];
-                var def = new XElement(One + "QuickStyleDef",
-                    new XAttribute("index", level), new XAttribute("name", $"h{level}"),
-                    new XAttribute("fontColor", color), new XAttribute("highlightColor", "automatic"),
-                    new XAttribute("font", "Calibri"), new XAttribute("fontSize", size),
-                    new XAttribute("spaceBefore", "0.0"), new XAttribute("spaceAfter", "0.0"));
-                if (italic)
-                {
-                    def.Add(new XAttribute("italic", "true"));
-                }
+                def.Add(new XAttribute("italic", "true"));
+            }
 
-                return def;
-            }).ToList();
+            return def;
+        }).ToList();
 
         if (defs.Count > 0)
         {
@@ -111,6 +115,9 @@ public static partial class HtmlToOneNote
                 "sup" or "sub" => $"<{e.LocalName}>{inner}</{e.LocalName}>",
                 "code" => $"<span style='font-family:Consolas'>{inner}</span>",
                 "a" => $"<a href=\"{WebUtility.HtmlEncode(e.GetAttribute("href") ?? "")}\">{inner}</a>",
+
+                // OneNote can't load an image from a URL here: keep it as a link.
+                "img" => $"<a href=\"{WebUtility.HtmlEncode(e.GetAttribute("src") ?? "")}\">{WebUtility.HtmlEncode(e.GetAttribute("alt") is { Length: > 0 } alt ? alt : e.GetAttribute("src") ?? "image")}</a>",
                 _ => inner,
             });
         }
@@ -118,11 +125,29 @@ public static partial class HtmlToOneNote
         return sb.ToString();
     }
 
-    private sealed class Builder
+    /// <param name="indexes">The page's QuickStyleDef indexes by name</param>
+    /// <param name="nextIndex">The first free QuickStyleDef index</param>
+    private sealed class Builder(Dictionary<string, int> indexes, int nextIndex)
     {
-        public HashSet<int> Headings { get; } = [];
+        private bool _inQuote;
+        private int _numberSequence;
 
-        private static XElement Oe(XElement parent, string innerHtml, int? style = null, string? listKind = null)
+        /// <summary>Styles this content needs that the page doesn't have yet</summary>
+        public List<(string Name, int Index)> NewStyles { get; } = [];
+
+        private int StyleIndex(string name)
+        {
+            if (!indexes.TryGetValue(name, out var index))
+            {
+                index = indexes[name] = nextIndex++;
+                NewStyles.Add((name, index));
+            }
+
+            return index;
+        }
+
+        /// <param name="number">For a numbered item, its number and the list's sequence</param>
+        private static XElement Oe(XElement parent, string innerHtml, int? style = null, string? listKind = null, (int Value, int Sequence) number = default)
         {
             var oe = new XElement(One + "OE");
             if (style is not null)
@@ -133,7 +158,7 @@ public static partial class HtmlToOneNote
             if (listKind is not null)
             {
                 oe.Add(new XElement(One + "List", listKind == "ol"
-                    ? new XElement(One + "Number", new XAttribute("numberSequence", "0"), new XAttribute("numberFormat", "##."))
+                    ? new XElement(One + "Number", new XAttribute("numberSequence", number.Sequence), new XAttribute("numberFormat", "##."), new XAttribute("text", $"{number.Value}."))
                     : new XElement(One + "Bullet", new XAttribute("bullet", "2"))));
             }
 
@@ -154,7 +179,7 @@ public static partial class HtmlToOneNote
                 var text = InlineHtml(run).Trim();
                 if (text.Length > 0)
                 {
-                    Oe(parent, text);
+                    Oe(parent, text, style: _inQuote ? StyleIndex("blockquote") : null);
                 }
 
                 run.Clear();
@@ -179,14 +204,18 @@ public static partial class HtmlToOneNote
                     case "br":
                         break;
                     case "h1" or "h2" or "h3" or "h4" or "h5" or "h6":
-                        var level = e.LocalName[1] - '0';
-                        Headings.Add(level);
                         if (parent.HasElements)
                         {
                             Oe(parent, ""); // blank line before a heading, like hand-made pages
                         }
 
-                        Oe(parent, InlineHtml(e.ChildNodes), style: level);
+                        Oe(parent, InlineHtml(e.ChildNodes), style: StyleIndex(e.LocalName));
+                        break;
+                    case "blockquote":
+                        var outerQuote = _inQuote;
+                        _inQuote = true;
+                        Blocks(e.ChildNodes, parent);
+                        _inQuote = outerQuote;
                         break;
                     case "ul" or "ol":
                         ListItems(e, parent);
@@ -205,7 +234,7 @@ public static partial class HtmlToOneNote
                     case "hr":
                         Oe(parent, new string('―', 20));
                         break;
-                    default: // p, div, blockquote, section, etc.
+                    default: // p, div, section, etc.
                         Blocks(e.ChildNodes, parent);
                         break;
                 }
@@ -216,6 +245,8 @@ public static partial class HtmlToOneNote
 
         private void ListItems(IElement list, XElement parent)
         {
+            var number = int.TryParse(list.GetAttribute("start"), out var start) ? start : 1;
+            var sequence = list.LocalName == "ol" ? _numberSequence++ : 0;
             foreach (var li in list.Children.Where(c => c.LocalName == "li"))
             {
                 var inline = li.ChildNodes.Where(IsInline).ToList();
@@ -228,7 +259,7 @@ public static partial class HtmlToOneNote
                     nested.RemoveAt(0);
                 }
 
-                var oe = Oe(parent, InlineHtml(inline), listKind: list.LocalName);
+                var oe = Oe(parent, InlineHtml(inline), listKind: list.LocalName, number: (number++, sequence));
                 if (nested.Count > 0)
                 {
                     var children = new XElement(One + "OEChildren");

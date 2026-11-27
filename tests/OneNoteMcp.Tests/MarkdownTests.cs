@@ -6,7 +6,7 @@ public class MarkdownTests
 {
     private const string Ns = "http://schemas.microsoft.com/office/onenote/2013/onenote";
 
-    private const string Sample = """
+    internal const string Sample = """
         Intro with **bold**, *italic*, ~~struck~~, `inline code`, and a [link](https://example.com).
 
         ## Lists
@@ -54,6 +54,60 @@ public class MarkdownTests
     [Fact]
     public void RoundTripsMarkdownThroughOneNoteXml() =>
         Assert.Equal($"# Sample\n\n{Sample}", RoundTrip(Sample));
+
+    [Theory]
+    [InlineData(@"Literal \*stars\* and \`ticks\` and a \\ backslash")]
+    [InlineData(@"\_edge\_ underscores, but snake_case stays")]
+    [InlineData(@"\# not a heading")]
+    [InlineData(@"1\. not a list")]
+    [InlineData(@"\- not a bullet")]
+    [InlineData(@"\> not a quote")]
+    [InlineData("2 < 3 & 4 > 1")]
+    [InlineData("| A | B |\n| --- | --- |\n| x \\| y | z |")]
+    [InlineData("***bold italic*** and **[bold link](https://x.test/?a=1&b=2)**")]
+    [InlineData("> Quoted line\n\nAfter the quote")]
+    [InlineData("- [ ] Task item")]
+    public void RoundTripsEdgeCases(string markdown) =>
+        Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
+
+    [Fact]
+    public void GivesEachNumberedListItsOwnSequence()
+    {
+        var page = new XElement(XName.Get("Page", Ns));
+        HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml("1. A\n2. B\n\nText\n\n1. C"));
+
+        Assert.Equal(["0", "0", "1"], page.Descendants(XName.Get("Number", Ns)).Select(n => (string?)n.Attribute("numberSequence")));
+    }
+
+    [Fact]
+    public void KeepsImagesAsLinks() =>
+        Assert.Equal("# Sample\n\n[Diagram](https://x.test/a.png)", RoundTrip("![Diagram](https://x.test/a.png)"));
+
+    [Fact]
+    public void DropsCodeLanguageButKeepsCode() =>
+        Assert.Equal("# Sample\n\n```\nvar x = 1;\n```", RoundTrip("```csharp\nvar x = 1;\n```"));
+
+    [Fact]
+    public void EscapesTextTypedInOneNote()
+    {
+        var xml = $"""
+            <one:Page xmlns:one="{Ns}" name="Typed">
+              <one:Outline><one:OEChildren>
+                <one:OE><one:T><![CDATA[# 1 priority: 2 * 3 = 6]]></one:T></one:OE>
+                <one:OE><one:T><![CDATA[1. Not a real list]]></one:T></one:OE>
+                <one:OE><one:List><one:Number numberSequence="0" numberFormat="##." text="a."/></one:List><one:T><![CDATA[Letter item]]></one:T></one:OE>
+              </one:OEChildren></one:Outline>
+            </one:Page>
+            """;
+
+        Assert.Equal(@"# Typed
+
+\# 1 priority: 2 \* 3 = 6
+
+1\. Not a real list
+
+1. Letter item".Replace("\r\n", "\n"), PageMarkdown.Convert(xml).Markdown);
+    }
 
     [Fact]
     public void SplitsLeadingTitle()

@@ -38,9 +38,29 @@ public class HtmlToOneNoteTests
 
         var oes = page.Element(One + "Outline")!.Element(One + "OEChildren")!.Elements(One + "OE").ToList();
         Assert.Equal(["One", "Body", "", "Three"], oes.Select(o => o.Element(One + "T")!.Value));
-        Assert.Equal("1", (string?)oes[0].Attribute("quickStyleIndex"));
-        Assert.Equal("3", (string?)oes[3].Attribute("quickStyleIndex"));
+        string StyleName(XElement oe) =>
+            (string)defs.Single(d => (string?)d.Attribute("index") == (string?)oe.Attribute("quickStyleIndex")).Attribute("name")!;
+        Assert.Equal("h1", StyleName(oes[0]));
+        Assert.Equal("h3", StyleName(oes[3]));
     }
+
+    [Fact]
+    public void ReusesPageStylesAndTakesFreeIndexes()
+    {
+        var page = new XElement(One + "Page",
+            new XElement(One + "QuickStyleDef", new XAttribute("index", "0"), new XAttribute("name", "PageTitle")),
+            new XElement(One + "QuickStyleDef", new XAttribute("index", "1"), new XAttribute("name", "p")),
+            new XElement(One + "QuickStyleDef", new XAttribute("index", "2"), new XAttribute("name", "h2")));
+        HtmlToOneNote.AddToPage(page, "<h1>One</h1><h2>Two</h2>");
+
+        Assert.Equal(["0 PageTitle", "1 p", "2 h2", "3 h1"],
+            page.Elements(One + "QuickStyleDef").Select(d => $"{d.Attribute("index")!.Value} {d.Attribute("name")!.Value}"));
+        Assert.Equal(["3", "", "2"], page.Descendants(One + "OE").Select(o => (string?)o.Attribute("quickStyleIndex") ?? ""));
+    }
+
+    [Fact]
+    public void KeepsImagesAsLinks() =>
+        Assert.Equal("<a href=\"https://x.test/a.png\">Diagram</a>", Assert.Single(Texts(Convert("<p><img src=\"https://x.test/a.png\" alt=\"Diagram\"></p>"))));
 
     [Fact]
     public void NestsLists()
