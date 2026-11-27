@@ -42,7 +42,8 @@ public static partial class HtmlToOneNote
     /// <summary>
     /// Appends <paramref name="html"/> to a page as an Outline, and adds the styles it needs.
     /// </summary>
-    public static void AddToPage(XElement page, string html)
+    /// <param name="fromMarkdown">The HTML came from Markdown, whose table code keeps <c>\|</c> for a pipe</param>
+    public static void AddToPage(XElement page, string html, bool fromMarkdown = false)
     {
         var body = new HtmlParser().ParseDocument($"<body>{html}</body>").Body!;
         var defs = page.Elements(One + "QuickStyleDef").ToList();
@@ -51,7 +52,7 @@ public static partial class HtmlToOneNote
         var indexes = defs.Where(d => d.Attribute("name") is not null && int.TryParse((string?)d.Attribute("index"), out _))
             .GroupBy(d => (string)d.Attribute("name")!)
             .ToDictionary(g => g.Key, g => int.Parse((string)g.First().Attribute("index")!));
-        var builder = new Builder(indexes, defs.Select(d => int.TryParse((string?)d.Attribute("index"), out var i) ? i : 0).DefaultIfEmpty(-1).Max() + 1);
+        var builder = new Builder(indexes, defs.Select(d => int.TryParse((string?)d.Attribute("index"), out var i) ? i : 0).DefaultIfEmpty(-1).Max() + 1, fromMarkdown);
 
         var outline = new XElement(One + "Outline");
         var children = new XElement(One + "OEChildren");
@@ -157,7 +158,8 @@ public static partial class HtmlToOneNote
 
     /// <param name="indexes">The page's QuickStyleDef indexes by name</param>
     /// <param name="nextIndex">The first free QuickStyleDef index</param>
-    private sealed class Builder(Dictionary<string, int> indexes, int nextIndex)
+    /// <param name="fromMarkdown">Turn <c>\|</c> in table code back into a pipe</param>
+    private sealed class Builder(Dictionary<string, int> indexes, int nextIndex, bool fromMarkdown)
     {
         private bool _inQuote;
         private bool _inTable;
@@ -214,7 +216,7 @@ public static partial class HtmlToOneNote
 
             void Flush()
             {
-                var text = InlineHtml(run, inTable: _inTable).Trim();
+                var text = InlineHtml(run, inTable: _inTable && fromMarkdown).Trim();
                 if (text.Length > 0)
                 {
                     Oe(parent, text, style: _inQuote ? StyleIndex("blockquote") : null);
@@ -370,7 +372,7 @@ public static partial class HtmlToOneNote
                     {
                         if (row[i].LocalName == "th")
                         {
-                            Oe(cellChildren, $"<b>{InlineHtml(row[i].ChildNodes, inTable: true).Trim()}</b>");
+                            Oe(cellChildren, $"<b>{InlineHtml(row[i].ChildNodes, inTable: fromMarkdown).Trim()}</b>");
                         }
                         else
                         {

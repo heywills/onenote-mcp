@@ -173,6 +173,17 @@ public class LiveTests
         WithPage("# Live link test (deleting now)\n\nBody", pageId =>
             Assert.StartsWith($"page_id: `{pageId}`", _tools.GetPageByLink(_client.GetHyperlink(pageId))));
 
+    // OneNote stores a page link in its own relative form; the reader turns it back into one get_page_by_link opens.
+    [LiveFact]
+    public void FollowsAPageLinkReadFromAPage() =>
+        WithPage("# Live link target (deleting now)\n\nTarget", targetId =>
+            WithPage($"# Live link source (deleting now)\n\n[Target](<{_client.GetHyperlink(targetId)}>)", sourceId =>
+            {
+                var line = _tools.GetPage(sourceId).Split('\n').Single(l => l.StartsWith("[Target]("));
+                var link = line["[Target](<".Length..^2];
+                Assert.StartsWith($"page_id: `{targetId}`", _tools.GetPageByLink(link));
+            }));
+
     [LiveFact]
     public void ReportsOneNoteErrors()
     {

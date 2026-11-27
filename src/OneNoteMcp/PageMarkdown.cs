@@ -94,6 +94,7 @@ public static partial class PageMarkdown
         {
             var flip = _kind == "list" && !_altIndents.Contains("");
             _altIndents.Clear();
+            _openLists.Clear();
             if (flip)
             {
                 _altIndents.Add("");
@@ -117,10 +118,14 @@ public static partial class PageMarkdown
         private void Oe(XElement oe, string indent, int number, string? quoteColumn)
         {
             var (styleName, styleItalic) = styles.TryGetValue((string?)oe.Attribute("quickStyleIndex") ?? "", out var s) ? s : ("", false);
-            var quote = styleName == "blockquote";
-
             // Inside an enclosing quote, "> " stays at that quote's column and the rest of the indent follows it.
-            quoteColumn = quote ? quoteColumn ?? indent : null;
+            // The children of a quoted item stay in the quote, styled or not.
+            if (styleName == "blockquote")
+            {
+                quoteColumn ??= indent;
+            }
+
+            var quote = quoteColumn is not null;
             var prefix = quoteColumn is null ? indent : quoteColumn + "> " + indent[quoteColumn.Length..];
             var list = oe.Element(One + "List");
 
@@ -170,7 +175,7 @@ public static partial class PageMarkdown
                 }
                 else if (text.Length == 0)
                 {
-                    Blank(indent, quote);
+                    Blank(indent, prefix, quote);
                 }
                 else if (heading.Success)
                 {
@@ -182,19 +187,20 @@ public static partial class PageMarkdown
                 }
             }
 
+            var childPrefix = quoteColumn is null ? childIndent : quoteColumn + "> " + childIndent[quoteColumn.Length..];
             foreach (var child in oe.Elements())
             {
                 switch (child.Name.LocalName)
                 {
                     // Only list items indent their content. Indented text elsewhere would read as code.
                     case "Image":
-                        Image(child, childIndent);
+                        Image(child, childPrefix, quote);
                         break;
                     case "Table":
                         Table(child, childIndent);
                         break;
                     case "InsertedFile":
-                        Paragraph(childIndent, $"[Attached: {Escape((string?)child.Attribute("preferredName") ?? "file")}]", false);
+                        Paragraph(childPrefix, $"[Attached: {Escape((string?)child.Attribute("preferredName") ?? "file")}]", quote);
                         break;
                     case "OEChildren":
                         Block(child, childIndent, quoteColumn);
@@ -209,7 +215,8 @@ public static partial class PageMarkdown
             }
         }
 
-        public void Image(XElement img, string indent)
+        /// <param name="prefix">Indent, plus "> " when quoted</param>
+        public void Image(XElement img, string prefix, bool quote = false)
         {
             var id = (string?)img.Element(One + "CallbackID")?.Attribute("callbackID") ?? (string?)img.Attribute("callbackID");
             if (id is null)
@@ -226,7 +233,7 @@ public static partial class PageMarkdown
                 Images.Add(reference);
             }
 
-            Paragraph(indent, $"[Image {reference.Index}]", false);
+            Paragraph(prefix, $"[Image {reference.Index}]", quote);
         }
 
         private void Table(XElement table, string indent)
@@ -234,8 +241,11 @@ public static partial class PageMarkdown
             var rows = table.Elements(One + "Row").Select((row, r) => row.Elements(One + "Cell").Select(cell =>
             {
                 // The header row renders bold already
+                // A code-style line (from <pre>) is inline code: a cell holds one line.
                 var text = string.Join(" ", cell.Descendants(One + "OE").Where(oe => oe.Element(One + "T") is not null).Select(oe =>
-                    InlineMarkdown(OeHtml(oe), (string?)oe.Attribute("style") ?? "", ignoreUniformBold: r == 0).Trim()));
+                    styles.GetValueOrDefault((string?)oe.Attribute("quickStyleIndex") ?? "").Name == "code"
+                        ? CodeSpan(Parser.ParseDocument($"<body>{OeHtml(oe)}</body>").Body!.TextContent.Replace(' ', ' '))
+                        : InlineMarkdown(OeHtml(oe), (string?)oe.Attribute("style") ?? "", ignoreUniformBold: r == 0).Trim()));
                 return Whitespace().Replace(text, " ").Trim().Replace("|", "\\|");
             }).ToList()).ToList();
             if (rows.Count == 0)
@@ -336,16 +346,26 @@ public static partial class PageMarkdown
         /// - The next list at that indent uses the other markers, or Markdown would join the two lists.
         /// - A blank OE in the quote style keeps the quote going.
         /// </remarks>
-        private void Blank(string indent, bool quote)
+        /// <param name="prefix">The blank OE's indent, plus "> " when quoted: the list it ends is open at that prefix</param>
+        private void Blank(string indent, string prefix, bool quote)
         {
-            if (_kind == "list")
+            // A list is open here even when its last item ended in a child paragraph, image, code, or table
+            if (_openLists.ContainsKey(prefix))
             {
                 if (!_altIndents.Remove(indent))
                 {
                     _altIndents.Add(indent);
                 }
 
-                _kind = "listBreak"; // the next list item separates
+                foreach (var closed in _openLists.Keys.Where(k => k.Length >= prefix.Length).ToList())
+                {
+                    _openLists.Remove(closed);
+                }
+
+                if (_kind == "list")
+                {
+                    _kind = "listBreak"; // the next list item separates
+                }
             }
             else if (_kind == "code")
             {
@@ -366,6 +386,7 @@ public static partial class PageMarkdown
             if (prefix is "" or "> ")
             {
                 _altIndents.Clear();
+                _openLists.Clear();
             }
         }
 
@@ -479,7 +500,7 @@ public static partial class PageMarkdown
             var before = sb.Length > 0 ? sb[^1] : outerBefore;
 
             // The next character, past any empty elements
-            var after = list.Skip(i + 1).Select(n => n.TextContent).FirstOrDefault(s => s.Length > 0) is { } nextText ? nextText[0] : outerAfter;
+            var after = NextChar(list.Skip(i + 1), outerAfter);
 
             var strike = style.Strike || tag is "s" or "del" or "strike";
             var italic = (style.Italic || tag is "i" or "em") && !ignore.Italic;
@@ -490,6 +511,10 @@ public static partial class PageMarkdown
             if (tag == "br")
             {
                 sb.Append(' ');
+            }
+            else if (tag == "a" && inCode)
+            {
+                sb.Append(inner); // a code span can't hold a link: keep the text
             }
             else if (tag == "a" && e.GetAttribute("href") is { } href && e.TextContent.Trim() == href && AutolinkUrl().IsMatch(href))
             {
@@ -650,11 +675,45 @@ public static partial class PageMarkdown
     /// <summary>
     /// A link destination Markdown reads as one: angle brackets around one with spaces or parentheses.
     /// </summary>
-    /// <remarks>Backslashes are doubled: Markdown reads one before punctuation as an escape, which breaks \\server\share links.</remarks>
+    /// <remarks>
+    /// - Backslashes are doubled: Markdown reads one before punctuation as an escape, which breaks \\server\share links.
+    /// - OneNote page links come back in the "Copy link to page" form.
+    /// </remarks>
     private static string LinkDestination(string href)
     {
-        href = href.Replace("\\", "\\\\").Replace("<", "%3C").Replace(">", "%3E");
+        href = OneNoteLink(href).Replace("\\", "\\\\").Replace("<", "%3C").Replace(">", "%3E");
         return href.IndexOfAny([' ', '(', ')']) >= 0 ? $"<{href}>" : href;
+    }
+
+    /// <summary>
+    /// A OneNote page link in the "Copy link to page" form, <c>onenote:https://…/Section.one#Page&amp;section-id={…}&amp;page-id={…}&amp;end</c>.
+    /// </summary>
+    /// <remarks>OneNote stores links within a notebook as <c>onenote:#Page&amp;…&amp;base-path=https://…/Section.one</c>, which onenote_get_page_by_link can't open.</remarks>
+    private static string OneNoteLink(string href)
+    {
+        var m = RelativeOneNoteLink().Match(href);
+        return m.Success ? $"onenote:{m.Groups[2].Value}#{Uri.UnescapeDataString(m.Groups[1].Value)}" : href;
+    }
+
+    /// <summary>
+    /// The first character of the next nodes, past empty elements. A line break counts as a space.
+    /// </summary>
+    private static char NextChar(IEnumerable<INode> nodes, char fallback)
+    {
+        foreach (var node in nodes)
+        {
+            if (node is IElement { LocalName: "br" })
+            {
+                return ' ';
+            }
+
+            if (node.TextContent.Length > 0)
+            {
+                return node.TextContent[0];
+            }
+        }
+
+        return fallback;
     }
 
     private static (bool Bold, bool Italic, bool Strike, bool Code) StyleOf(string css)
@@ -743,6 +802,10 @@ public static partial class PageMarkdown
     /// <summary>A URL a CommonMark autolink can hold: a scheme, and no spaces, angle brackets, or backslashes.</summary>
     [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>\\]*$")]
     private static partial Regex AutolinkUrl();
+
+    /// <summary>A OneNote link stored relative to its section: the fragment, then the base path.</summary>
+    [GeneratedRegex(@"^onenote:#(.*?)&base-path=(.+)$")]
+    private static partial Regex RelativeOneNoteLink();
 
     /// <summary>OneNote's number text: <c>1.</c> or <c>1)</c></summary>
     [GeneratedRegex(@"^(\d+)[.)]$")]

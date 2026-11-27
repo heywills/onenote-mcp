@@ -47,7 +47,7 @@ public class MarkdownTests
         var page = new XElement(XName.Get("Page", Ns), new XAttribute("name", "Sample"),
             new XElement(XName.Get("QuickStyleDef", Ns), new XAttribute("index", "0"), new XAttribute("name", "PageTitle")),
             new XElement(XName.Get("Title", Ns)));
-        HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml(markdown));
+        HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml(markdown), fromMarkdown: true);
         return PageMarkdown.Convert(page.ToString()).Markdown;
     }
 
@@ -284,6 +284,54 @@ public class MarkdownTests
     [InlineData("**`x`** and `a`**`b`**")]
     public void RoundTripsPipesAndFormattingInCode(string markdown) =>
         Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(RoundTrip(markdown)["# Sample\n\n".Length..]));
+
+    [Theory]
+    [InlineData("- a\n\n  b\n\n* c")]
+    [InlineData("> - item\n>\n>   quoted child")]
+    public void RoundTripsListEndingsAndQuotedChildren(string markdown) =>
+        Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
+
+    [Fact]
+    public void KeepsAPipeInHtmlTableCodeAsWritten()
+    {
+        var page = new XElement(XName.Get("Page", Ns));
+        HtmlToOneNote.AddToPage(page, "<table><tr><td><code>grep a\\|b</code></td></tr></table>");
+
+        Assert.Equal("<span style='font-family:Consolas'>grep&nbsp;a\\|b</span>", page.Descendants(XName.Get("T", Ns)).Last().Value);
+    }
+
+    [Fact]
+    public void ReadsQuotedItemChildrenAndCellCodeAndLinksInCode()
+    {
+        var xml = $"""
+            <one:Page xmlns:one="{Ns}" name="P"><one:Title/>
+              <one:QuickStyleDef index="5" name="blockquote"/><one:QuickStyleDef index="6" name="code"/>
+              <one:Outline><one:OEChildren>
+                <one:OE quickStyleIndex="5"><one:List><one:Bullet bullet="2"/></one:List><one:T>item</one:T>
+                  <one:OEChildren><one:OE><one:Image><one:CallbackID callbackID="cb"/></one:Image></one:OE></one:OEChildren></one:OE>
+              </one:OEChildren></one:Outline>
+              <one:Outline><one:OEChildren>
+                <one:OE><one:Table>
+                  <one:Row><one:Cell><one:OEChildren><one:OE><one:T>H</one:T></one:OE></one:OEChildren></one:Cell></one:Row>
+                  <one:Row><one:Cell><one:OEChildren><one:OE quickStyleIndex="6"><one:T>a*b</one:T></one:OE></one:OEChildren></one:Cell></one:Row>
+                </one:Table></one:OE>
+                <one:OE><one:T><![CDATA[<span style='font-family:Consolas'>run <a href="https://x">cmd</a></span> and <b>Note:</b><br>next]]></one:T></one:OE>
+              </one:OEChildren></one:Outline>
+            </one:Page>
+            """;
+
+        Assert.Equal("# P\n\n> - item\n>\n>   [Image 1]\n\n| H |\n| --- |\n| `a*b` |\n\n`run cmd` and **Note:** next", PageMarkdown.Convert(xml).Markdown);
+    }
+
+    [Fact]
+    public void WritesOneNotePageLinksInTheCopyLinkForm()
+    {
+        const string stored = "onenote:#Agent%20tool%20comparisons&section-id=%7BC6D0BF8C-A2F7-40C0-B0EC-AE82CCC4E004%7D&page-id=%7B070EF062-FF02-48B1-9B99-08B45AD94F1D%7D&end&base-path=https://x.sharepoint.com/OneNote/Mike%20@%20Work/Agent%20tools.one";
+        var markdown = Read($"<one:OE><one:T><![CDATA[<a href=\"{stored}\">Page</a>]]></one:T></one:OE>");
+
+        Assert.Equal("# P\n\n[Page](<onenote:https://x.sharepoint.com/OneNote/Mike%20@%20Work/Agent%20tools.one#Agent tool comparisons&section-id={C6D0BF8C-A2F7-40C0-B0EC-AE82CCC4E004}&page-id={070EF062-FF02-48B1-9B99-08B45AD94F1D}&end>)", markdown);
+        Assert.NotNull(PageLink.Parse(markdown));
+    }
 
     [Fact]
     public void ReadsBoldCodeAndMergesCodeRuns()

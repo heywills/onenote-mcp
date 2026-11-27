@@ -204,12 +204,12 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
             title = heading ?? throw new McpException("No title: pass a title or start the Markdown with a \"# \" heading");
         }
 
-        return CreatePageFromHtml(sectionId, title, MarkdownToOneNote.ToHtml(markdown));
+        return CreatePageFromHtml(sectionId, title, MarkdownToOneNote.ToHtml(markdown), fromMarkdown: true);
     }
 
     // Helpers
 
-    private string CreatePageFromHtml(string sectionId, string title, string contentHtml)
+    private string CreatePageFromHtml(string sectionId, string title, string contentHtml, bool fromMarkdown = false)
     {
         var pageId = oneNote.CreateNewPage(sectionId);
         try
@@ -219,7 +219,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
             titleText?.ReplaceNodes(new XCData(System.Net.WebUtility.HtmlEncode(title)));
             if (!string.IsNullOrWhiteSpace(contentHtml))
             {
-                HtmlToOneNote.AddToPage(page, contentHtml);
+                HtmlToOneNote.AddToPage(page, contentHtml, fromMarkdown);
             }
 
             oneNote.UpdatePageContent(page.ToString(SaveOptions.DisableFormatting));
