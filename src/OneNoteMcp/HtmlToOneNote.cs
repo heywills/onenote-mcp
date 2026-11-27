@@ -102,7 +102,7 @@ public static partial class HtmlToOneNote
             if (n is IText t)
             {
                 sb.Append(inCode
-                    ? WebUtility.HtmlEncode(t.Data).Replace(" ", "&nbsp;")
+                    ? CodeHtml(t.Data)
                     : WebUtility.HtmlEncode(Whitespace().Replace(t.Data, " ")));
                 continue;
             }
@@ -135,10 +135,17 @@ public static partial class HtmlToOneNote
     }
 
     /// <summary>
+    /// Code text as OneNote HTML: every space and tab kept as an entity, so trimming can't drop indentation.
+    /// </summary>
+    private static string CodeHtml(string text) => WebUtility.HtmlEncode(text).Replace(" ", "&nbsp;").Replace("\t", "&#9;");
+
+    /// <summary>
     /// The link target, with backslashes back.
     /// </summary>
-    /// <remarks>Markdig writes a backslash in a URL as <c>%5C</c>, which breaks <c>\\server\share</c> links in OneNote.</remarks>
-    /// <remarks>Only file-share and file: links: elsewhere %5C is part of the URL.</remarks>
+    /// <remarks>
+    /// - Markdig writes a backslash in a URL as <c>%5C</c>, which breaks <c>\\server\share</c> links in OneNote.
+    /// - Only file-share and file: links: elsewhere %5C is part of the URL.
+    /// </remarks>
     private static string Href(string? href)
     {
         href ??= "";
@@ -280,7 +287,7 @@ public static partial class HtmlToOneNote
                         var codeText = e.TextContent.EndsWith('\n') ? e.TextContent[..^1] : e.TextContent;
                         foreach (var line in codeText.Split('\n'))
                         {
-                            var escaped = WebUtility.HtmlEncode(line.TrimEnd('\r')).Replace(" ", "&nbsp;");
+                            var escaped = CodeHtml(line.TrimEnd('\r'));
                             Oe(parent, escaped.Length > 0 ? escaped : "&nbsp;", style: code);
                         }
 

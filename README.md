@@ -46,8 +46,8 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 - Markdown that OneNote can't hold:
   - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
   - Numbered lists start at 1. OneNote numbers lists itself, so separate lists alternate between `1.` and `1)` in OneNote to restart.
-  - A hard line break inside a paragraph splits it into two paragraphs. OneNote drops line breaks inside a paragraph.
-  - Images become links. Code blocks lose their language.
+  - A hard line break splits a paragraph in two, and becomes a space in a list item. OneNote drops line breaks inside a paragraph.
+  - Images become links. Code blocks lose their language, and OneNote stores a tab in code as 8 spaces.
   - Headings, tables, and code inside a quote lose the quote. Nested quotes flatten to one level.
   - Bold that covers a whole table header cell is dropped, since the header row is already bold. So is italic that covers a whole h4 or h6 heading, since those styles are italic.
 

@@ -80,6 +80,9 @@ public static partial class PageMarkdown
         /// <remarks>Its content must follow on the next line: a blank line after a bare marker ends the item.</remarks>
         private bool _bareMarker;
 
+        /// <summary>The lists open at each line prefix, and whether each is bulleted.</summary>
+        private readonly Dictionary<string, bool> _openLists = [];
+
         /// <summary>The list indents that use <c>*</c> and <c>1)</c> markers.</summary>
         /// <remarks>Back-to-back lists of the same kind, or in side-by-side outlines, would read as one list.</remarks>
         private readonly HashSet<string> _altIndents = [];
@@ -279,11 +282,25 @@ public static partial class PageMarkdown
                 Separate(quote ? prefix : null);
             }
 
+            else if (!bullet && marker.TrimEnd()[..^1] != "1" && !_bareMarker
+                && (!_openLists.TryGetValue(prefix, out var openBullet) || openBullet))
+            {
+                // A new numbered list that starts above 1 can't interrupt the line above it, so it needs a blank line first
+                _lines.Add(prefix.TrimEnd());
+            }
+
             if (topLevel)
             {
                 _topLevelBullet = bullet;
             }
 
+            // Deeper lists end when an item at this indent starts
+            foreach (var deeper in _openLists.Keys.Where(k => k.Length > prefix.Length).ToList())
+            {
+                _openLists.Remove(deeper);
+            }
+
+            _openLists[prefix] = bullet;
             _lines.Add((prefix + marker + text).TrimEnd());
             _kind = "list";
             _quotePrefix = quote ? prefix : null;
@@ -399,9 +416,11 @@ public static partial class PageMarkdown
         var paragraph = StyleOf(paragraphStyle);
         var ignore = (
             Bold: ignoreUniformBold && (paragraph.Bold || AllTextHas(body, (s, tag) => s.Bold || tag is "b" or "strong")),
-            Italic: ignoreUniformItalic && (paragraph.Italic || AllTextHas(body, (s, tag) => s.Italic || tag is "i" or "em")));
+            Italic: ignoreUniformItalic && (paragraph.Italic || AllTextHas(body, (s, tag) => s.Italic || tag is "i" or "em")),
+            Strike: false);
 
-        var text = Inline(body.ChildNodes, paragraph.Code, ignore);
+        // Formatting the paragraph already wraps doesn't wrap again inside it
+        var text = Inline(body.ChildNodes, paragraph.Code, (ignore.Bold || paragraph.Bold, ignore.Italic || paragraph.Italic, paragraph.Strike));
         if (paragraph.Code)
         {
             return CodeSpan(text);
@@ -412,10 +431,11 @@ public static partial class PageMarkdown
         return Wrap(text, paragraph.Bold && !ignore.Bold ? "**" : "");
     }
 
+    /// <param name="ignore">Formatting to skip: dropped, or already wrapped by an enclosing element</param>
     /// <param name="inLink">Inside link text, where any bracket outside code would end the link</param>
     /// <param name="outerBefore">The character before these nodes, for emphasis flanking</param>
     /// <param name="outerAfter">The character after these nodes, for emphasis flanking</param>
-    private static string Inline(IEnumerable<INode> nodes, bool inCode, (bool Bold, bool Italic) ignore, bool inLink = false, char outerBefore = ' ', char outerAfter = ' ')
+    private static string Inline(IEnumerable<INode> nodes, bool inCode, (bool Bold, bool Italic, bool Strike) ignore, bool inLink = false, char outerBefore = ' ', char outerAfter = ' ')
     {
         var sb = new StringBuilder();
         var list = nodes.ToList();
@@ -454,8 +474,15 @@ public static partial class PageMarkdown
             var tag = e.LocalName;
             var code = inCode || style.Code || tag == "code";
             var before = sb.Length > 0 ? sb[^1] : outerBefore;
-            var after = i + 1 < list.Count && list[i + 1].TextContent is { Length: > 0 } nextText ? nextText[0] : outerAfter;
-            var inner = Inline(run.SelectMany(r => r.ChildNodes), code, ignore, inLink || tag == "a", before, after);
+
+            // The next character, past any empty elements
+            var after = list.Skip(i + 1).Select(n => n.TextContent).FirstOrDefault(s => s.Length > 0) is { } nextText ? nextText[0] : outerAfter;
+
+            var strike = style.Strike || tag is "s" or "del" or "strike";
+            var italic = (style.Italic || tag is "i" or "em") && !ignore.Italic;
+            var bold = (style.Bold || tag is "b" or "strong") && !ignore.Bold;
+            strike &= !ignore.Strike;
+            var inner = Inline(run.SelectMany(r => r.ChildNodes), code, (ignore.Bold || bold, ignore.Italic || italic, ignore.Strike || strike), inLink || tag == "a", before, after);
 
             if (tag == "br")
             {
@@ -483,10 +510,6 @@ public static partial class PageMarkdown
             }
             else
             {
-                var strike = style.Strike || tag is "s" or "del" or "strike";
-                var italic = (style.Italic || tag is "i" or "em") && !ignore.Italic;
-                var bold = (style.Bold || tag is "b" or "strong") && !ignore.Bold;
-
                 if (!MarkersCanWrap(inner, before, after))
                 {
                     // "func**(x)**" shows the asterisks: Markdown emphasis can't open between a letter and punctuation.

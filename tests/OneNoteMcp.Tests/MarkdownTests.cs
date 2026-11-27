@@ -253,6 +253,32 @@ public class MarkdownTests
     public void RoundTripsNestedBlocks(string markdown) =>
         Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
 
+    [Theory]
+    [InlineData("```\nfunc f() {\n\treturn 1\n}\n```")]
+    [InlineData("Run `a\tb` now")]
+    public void KeepsTabsInCode(string markdown) =>
+        Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
+
+    [Fact]
+    public void PutsABlankLineBeforeANestedListThatStartsAboveOne()
+    {
+        const string bullet = "<one:List><one:Bullet bullet=\"2\"/></one:List>";
+        static string Num(string text) => $"<one:List><one:Number numberSequence=\"0\" numberFormat=\"##.\" text=\"{text}\"/></one:List>";
+        var markdown = Read($"<one:OE>{bullet}<one:T>B</one:T><one:OEChildren><one:OE>{Num("3.")}<one:T>y</one:T></one:OE><one:OE>{Num("4.")}<one:T>z</one:T></one:OE></one:OEChildren></one:OE>"
+            + $"<one:OE>{bullet}<one:T>C</one:T></one:OE>");
+
+        Assert.Equal("# P\n\n- B\n\n  3. y\n  4. z\n- C", markdown);
+        Assert.Contains("<ol start=\"3\">", MarkdownToOneNote.ToHtml(markdown));
+    }
+
+    [Fact]
+    public void DoesNotWrapFormattingTheParagraphAlreadyHas() =>
+        Assert.Equal("# P\n\n**x y**", Read("<one:OE style=\"font-weight:bold\"><one:T><![CDATA[<span style='font-weight:bold'>x</span> y]]></one:T></one:OE>"));
+
+    [Fact]
+    public void LooksPastEmptyElementsForTheNextCharacter() =>
+        Assert.Equal("# P\n\n<strong>foo.</strong>bar", Read("<one:OE><one:T><![CDATA[<span style='font-weight:bold'>foo.</span><span></span>bar]]></one:T></one:OE>"));
+
     [Fact]
     public void RestoresBackslashesOnlyInFileLinks()
     {

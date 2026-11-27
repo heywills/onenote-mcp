@@ -29,6 +29,8 @@ public class LiveTests
 {
     public const string SectionVariable = "ONENOTE_LIVE_SECTION";
 
+    private const string TabIndentedCode = "```\nfunc f() {\n\treturn 1\n}\n```";
+
     private readonly OneNoteClient _client = new();
     private readonly OneNoteTools _tools;
 
@@ -147,12 +149,15 @@ public class LiveTests
             > - quoted a
             >
             > * quoted b
+
+            {TabIndentedCode}
             """.Replace("\r\n", "\n");
 
         // OneNote numbers each list itself, from 1
         // Images become links, and OneNote stores a \\server\share link as file://server/share
         var expected = markdown.Replace("3. Starts at three\n4. Four", "1. Starts at three\n2. Four").Replace("- ![screenshot]", "- [screenshot]")
-            .Replace(@"(\\\\fileserver\\share\\spec.docx)", "(file://fileserver/share/spec.docx)");
+            .Replace(@"(\\\\fileserver\\share\\spec.docx)", "(file://fileserver/share/spec.docx)")
+            .Replace("\treturn 1", "        return 1"); // OneNote stores a tab in code as 8 spaces
         WithPage(markdown, pageId => Assert.Equal(expected, _tools.GetPage(pageId)));
     }
 
