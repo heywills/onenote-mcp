@@ -459,9 +459,10 @@ public static partial class HtmlToOneNote
         private void Code(IElement pre, XElement parent)
         {
             var code = StyleIndex("code");
-            if (HasStyle(parent.Elements(One + "OE").LastOrDefault(), "code"))
+            // Keeps back-to-back code blocks apart. An indent under the last code line means one block, split to show the indent.
+            if (parent.Elements(One + "OE").LastOrDefault() is { } last && HasStyle(last, "code") && last.Element(One + "OEChildren") is null)
             {
-                Oe(parent, ""); // keeps back-to-back code blocks apart
+                Oe(parent, "");
             }
 
             // Only the final newline ends the code. Leading and inner blank lines are code.

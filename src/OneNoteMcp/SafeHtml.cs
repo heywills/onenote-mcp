@@ -9,7 +9,7 @@ namespace OneNoteMcp;
 /// </summary>
 /// <remarks>
 /// - OneNote text can hold any HTML, from clipped pages or other tools, and a browser opens the saved file.
-/// - Keeps bold, italic, underline, strikethrough, superscript, subscript, line breaks, links other than script links, and spans with <see cref="Css.Inline"/> styles. Other tags drop and keep their text.
+/// - Keeps bold, italic, underline, strikethrough, superscript, subscript, line breaks, links with safe schemes, and spans with <see cref="Css.Inline"/> styles. Other tags drop and keep their text.
 /// </remarks>
 internal static class SafeHtml
 {
@@ -18,8 +18,11 @@ internal static class SafeHtml
     /// <summary>Elements dropped with their text</summary>
     private static readonly HashSet<string> Dropped = ["script", "style", "template", "noscript", "iframe", "object", "embed", "svg", "math", "title", "textarea"];
 
-    /// <summary>Schemes that run script or carry their own content in a browser</summary>
-    private static readonly HashSet<string> BlockedSchemes = new(StringComparer.OrdinalIgnoreCase) { "javascript", "vbscript", "data" };
+    /// <summary>Schemes that run script or carry their own content in a browser, and Windows handlers used in attacks, such as <c>ms-msdt:</c> (Follina)</summary>
+    private static readonly HashSet<string> BlockedSchemes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "javascript", "vbscript", "data", "ms-msdt", "search-ms", "search", "ms-officecmd",
+    };
 
     /// <summary>The safe part of <paramref name="html"/>.</summary>
     public static string Inline(string html)
@@ -29,7 +32,7 @@ internal static class SafeHtml
         return sb.ToString();
     }
 
-    /// <summary>Whether a link is anything but a <c>javascript:</c>, <c>vbscript:</c>, or <c>data:</c> link.</summary>
+    /// <summary>Whether a link avoids the schemes in <see cref="BlockedSchemes"/>.</summary>
     /// <remarks>
     /// - A block list, so app links such as <c>tel:</c>, <c>msteams:</c>, and <c>ms-word:</c> keep working.
     /// - Browsers ignore spaces and control characters in a scheme, so <c>java&#9;script:</c> is still a script.

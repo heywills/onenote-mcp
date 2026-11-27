@@ -611,14 +611,14 @@ public static partial class PageMarkdown
             return inner; // a code span can't hold a link: keep the text
         }
 
-        if (href is not null && a.TextContent.Trim() == href && AutolinkUrl().IsMatch(href))
+        if (string.IsNullOrEmpty(href) || !SafeHtml.IsSafeHref(href))
         {
-            return $"<{href}>"; // OneNote links bare URLs. An autolink needs no escaping.
+            return inner; // an anchor, or a script link
         }
 
-        if (string.IsNullOrEmpty(href))
+        if (a.TextContent.Trim() == href && AutolinkUrl().IsMatch(href))
         {
-            return inner; // an anchor, not a link
+            return $"<{href}>"; // OneNote links bare URLs. An autolink needs no escaping.
         }
 
         // A monospace link: [`text`](url)
@@ -646,10 +646,10 @@ public static partial class PageMarkdown
         {
             foreach (var node in children)
             {
-                if (node is IElement { LocalName: "a" } a && !string.IsNullOrEmpty(a.GetAttribute("href")))
+                if (node is IElement { LocalName: "a" } a && a.GetAttribute("href") is { Length: > 0 } href && SafeHtml.IsSafeHref(href))
                 {
                     Flush();
-                    sb.Append($"[{CodeSpan(a.TextContent.Replace('\u00A0', ' ').Trim())}]({LinkDestination(a.GetAttribute("href")!)})");
+                    sb.Append($"[{CodeSpan(a.TextContent.Replace('\u00A0', ' ').Trim())}]({LinkDestination(href)})");
                 }
                 else if (node is IElement element && HasLink(element))
                 {

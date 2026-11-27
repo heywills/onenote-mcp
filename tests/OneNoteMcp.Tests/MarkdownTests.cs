@@ -214,6 +214,11 @@ public class MarkdownTests
         PageMarkdown.Convert($"""<one:Page xmlns:one="{Ns}" name="{pageName}">{(hasTitle ? "<one:Title/>" : "")}<one:Outline><one:OEChildren>{body}</one:OEChildren></one:Outline></one:Page>""").Markdown;
 
     [Fact]
+    public void WritesScriptLinksAsText() =>
+        Assert.Equal("# P\n\nx and `y` [`z`](https://x.test)",
+            Read("""<one:OE><one:T><![CDATA[<a href="javascript:alert(1)">x</a> and <span style='font-family:Consolas'><a href="vbscript:y">y</a> <a href="https://x.test">z</a></span>]]></one:T></one:OE>"""));
+
+    [Fact]
     public void JoinsTextRunsOfOneParagraph()
     {
         const string bullet = "<one:List><one:Bullet bullet=\"2\"/></one:List>";

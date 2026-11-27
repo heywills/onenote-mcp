@@ -207,7 +207,11 @@ public class HtmlToOneNoteTests
 
     [Fact]
     public void DropsScriptLinks() =>
-        Assert.Equal(["x pic d"], Texts(Convert("<p><a href=\"java&#9;script:alert(1)\">x</a> <img src=\"JavaScript:y\" alt=\"pic\"> <a href=\"data:text/html,x\">d</a></p>")));
+        Assert.Equal(["x pic d m"],Texts(Convert("<p><a href=\"java&#9;script:alert(1)\">x</a> <img src=\"JavaScript:y\" alt=\"pic\"> <a href=\"data:text/html,x\">d</a> <a href=\"MS-MSDT:/id x\">m</a></p>")));
+
+    [Fact]
+    public void KeepsCodeSplitByAnIndentAsOneBlock() =>
+        Assert.Equal(["A", "B", "i", "C"], Texts(Convert("<pre>A\nB</pre><div class=\"indent\"><p>i</p></div><pre>C</pre>")));
 
     [Fact]
     public void KeepsAppLinks() =>

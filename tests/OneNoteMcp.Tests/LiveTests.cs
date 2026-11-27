@@ -365,10 +365,14 @@ public class LiveTests
             <h2>Heading</h2>
             <ul><li>Bullet<ol><li>Number</li></ol></li></ul>
             <table><tr><th>Head</th></tr><tr><td style="background-color:#DDEBF7">Shaded</td></tr></table>
+            <pre>A
+            B</pre><div class="indent"><p>Under B</p></div><pre>C</pre>
             """;
         WithCreated(_tools.CreatePage(SectionId(), "Live HTML round trip (deleting now)", html), pageId =>
         {
             var first = _tools.GetPage(pageId, inline: true, format: "html");
+            // One code block, split to show the indent, with no blank line added
+            Assert.Contains("</div>\n<pre>\nC</pre>", first);
             // OneNote writes #FF0000 as red, and copies the alignment into the style
             Assert.Contains("text-align:center\"", first);
             Assert.DoesNotContain("text-align:center;text-align", first);

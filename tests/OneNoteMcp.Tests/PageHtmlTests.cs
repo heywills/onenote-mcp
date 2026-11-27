@@ -115,6 +115,15 @@ public class PageHtmlTests
                 """));
 
     [Fact]
+    public void LeavesImageOnlyLinesOutOfCode() =>
+        Assert.Equal("<pre>\nx</pre>\n<p><img data-callback-id=\"cb\" alt=\"Image 1\"></p>\n<pre>\ny</pre>\n",
+            Body("""
+                <one:OE quickStyleIndex="4"><one:T>x</one:T></one:OE>
+                <one:OE quickStyleIndex="4"><one:Image><one:CallbackID callbackID="cb"/></one:Image></one:OE>
+                <one:OE quickStyleIndex="4"><one:T>y</one:T></one:OE>
+                """));
+
+    [Fact]
     public void WritesBlankLinesThatShow() =>
         Assert.Equal("<p>a</p>\n<p><br></p>\n<p>b</p>\n", Body("<one:OE><one:T>a</one:T></one:OE><one:OE><one:T></one:T></one:OE><one:OE><one:T>b</one:T></one:OE>"));
 

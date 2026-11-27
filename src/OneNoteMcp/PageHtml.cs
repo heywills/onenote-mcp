@@ -140,9 +140,16 @@ public static class PageHtml
                     _html.Append("</blockquote>\n");
                     break;
                 case "pre":
-                    var lines = oes.Select(oe => Encode(PageMarkdown.CleanText(string.Concat(oe.Elements(One + "T").Select(t => t.Value)))));
-                    // The parser drops the first newline after <pre>, so this one keeps a leading blank line
-                    _html.Append($"<pre>\n{string.Join("\n", lines)}</pre>\n");
+                    // A line that holds only an image, table, or file isn't a code line
+                    var lines = oes.Where(oe => oe.Element(One + "T") is not null)
+                        .Select(oe => Encode(PageMarkdown.CleanText(string.Concat(oe.Elements(One + "T").Select(t => t.Value)))))
+                        .ToList();
+                    if (lines.Count > 0)
+                    {
+                        // The parser drops the first newline after <pre>, so this one keeps a leading blank line
+                        _html.Append($"<pre>\n{string.Join("\n", lines)}</pre>\n");
+                    }
+
                     Content(oes[^1], indent: true);
                     break;
                 default:
