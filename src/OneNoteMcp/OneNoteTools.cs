@@ -248,7 +248,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         catch
         {
             // Don't leave a blank "Untitled page" behind
-            try { oneNote.DeleteHierarchy(pageId); } catch (McpException) { }
+            try { oneNote.DeleteHierarchy(pageId, permanently: true); } catch (McpException) { }
             throw;
         }
 

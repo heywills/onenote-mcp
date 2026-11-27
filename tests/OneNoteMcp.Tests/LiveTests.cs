@@ -185,7 +185,9 @@ public class LiveTests
                 Assert.StartsWith($"page_id: `{targetId}`", _tools.GetPageByLink(link));
             }));
 
-    // Leaves the page in Deleted Pages: OneNote refuses to delete from there through the API
+    /// <remarks>
+    /// - Leaves the page in Deleted Pages: OneNote refuses to delete from there through the API
+    /// </remarks>
     [LiveFact]
     public void DeletesPagesOnly()
     {
