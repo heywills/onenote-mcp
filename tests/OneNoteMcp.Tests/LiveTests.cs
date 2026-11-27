@@ -19,7 +19,7 @@ public sealed class LiveFactAttribute : FactAttribute
 }
 
 /// <summary>
-/// Tests against OneNote desktop. They create pages in a test section and delete them permanently, except the delete test's page, which stays in Deleted Pages.
+/// Tests against OneNote desktop. They create pages in a test section and delete them permanently.
 /// </summary>
 /// <remarks>
 /// - <c>ONENOTE_LIVE_SECTION</c>: <c>Notebook name/Section name</c> for test pages
@@ -189,7 +189,7 @@ public class LiveTests
     [LiveFact]
     public void DeletesPagesOnly()
     {
-        var sectionId = SectionId();
+        var (notebookId, sectionId) = TestIds();
         Assert.Contains("Not a page: Section", Assert.Throws<McpException>(() => _tools.DeletePage(sectionId)).Message);
 
         var title = $"Live delete test {Guid.NewGuid():N} (in Deleted Pages)";
@@ -207,7 +207,7 @@ public class LiveTests
 
         Assert.DoesNotContain(pageId, _tools.ListPages(sectionId));
 
-        var deleted = System.Xml.Linq.XElement.Parse(_client.GetHierarchy("", Microsoft.Office.Interop.OneNote.HierarchyScope.hsPages))
+        var deleted = System.Xml.Linq.XElement.Parse(_client.GetHierarchy(notebookId, Microsoft.Office.Interop.OneNote.HierarchyScope.hsPages))
             .Descendants(Hierarchy.One + "Page")
             .Single(p => (bool?)p.Attribute("isInRecycleBin") == true && (string?)p.Attribute("name") == title);
         Assert.Contains("already in Deleted Pages", Assert.Throws<McpException>(() => _tools.DeletePage((string)deleted.Attribute("ID")!)).Message);
@@ -248,7 +248,9 @@ public class LiveTests
         }
     }
 
-    private string SectionId()
+    private string SectionId() => TestIds().Section;
+
+    private (string Notebook, string Section) TestIds()
     {
         var path = Environment.GetEnvironmentVariable(SectionVariable)!;
         var slash = path.LastIndexOf('/');
@@ -263,7 +265,7 @@ public class LiveTests
 
         var notebookId = IdOf(_tools.ListNotebooks(), notebookName)
             ?? throw new InvalidOperationException($"Notebook \"{notebookName}\" isn't open in OneNote");
-        return IdOf(_tools.ListSections(notebookId), sectionName)
-            ?? throw new InvalidOperationException($"Section \"{sectionName}\" not found in \"{notebookName}\"");
+        return (notebookId, IdOf(_tools.ListSections(notebookId), sectionName)
+            ?? throw new InvalidOperationException($"Section \"{sectionName}\" not found in \"{notebookName}\""));
     }
 }

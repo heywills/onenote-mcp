@@ -208,7 +208,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     }
 
     [McpServerTool(Name = "onenote_delete_page", Destructive = true, Idempotent = false)]
-    [Description("Move a page to its notebook's Deleted Pages, where OneNote keeps it for 60 days. Deletes pages only, never sections or notebooks.")]
+    [Description("Move a page to its notebook's Deleted Pages, where OneNote keeps it for 60 days. Its subpages stay in the section. Deletes pages only, never sections or notebooks.")]
     public string DeletePage([Description("The page ID")] string pageId)
     {
         var page = XElement.Parse(oneNote.GetHierarchy(pageId, HierarchyScope.hsSelf));
