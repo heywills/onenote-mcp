@@ -206,6 +206,23 @@ public class HtmlToOneNoteTests
     }
 
     [Fact]
+    public void DropsScriptLinks() =>
+        Assert.Equal(["x pic"], Texts(Convert("<p><a href=\"java&#9;script:alert(1)\">x</a> <img src=\"JavaScript:y\" alt=\"pic\"></p>")));
+
+    [Fact]
+    public void KeepsOnlyColorFunctions() =>
+        Assert.Equal(["<span style=\"color:rgb(1,2,3)\">s</span>"],
+            Texts(Convert("<p><span style=\"color:rgb(1,2,3);background:image-set(&quot;https://x.test/a.png&quot; 1x);font-family:url/**/(x)\">s</span></p>")));
+
+    [Fact]
+    public void SkipsLineBreaksBetweenBlocks() =>
+        Assert.Equal(["Intro", "Next", ""], Texts(Convert("<div>Intro</div><br><h2>Next</h2>\n<br>\n<p><br></p>")));
+
+    [Fact]
+    public void BoldsHeaderCellsOutsideTheHeaderRow() =>
+        Assert.Equal(["H", "", "<b>Row</b>", "v"], Texts(Convert("<table><tr><th>H</th><th></th></tr><tr><th>Row</th><td>v</td></tr></table>")));
+
+    [Fact]
     public void SizesImagesFromPoints()
     {
         var page = new XElement(One + "Page", new XElement(One + "Title"));

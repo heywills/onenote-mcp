@@ -15,8 +15,8 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     private const int DefaultMaxImageKb = 512;
     private const string OutputPathDescription = "Absolute path of the file to save, such as C:\\work\\page.md. Overwrites it. Required unless inline is true.";
     private const string GetPageDescription = """
-        Save a page as Markdown to outputPath, with its images in a folder next to it, linked from the Markdown: page.md gets page_images.
-        Or return it with inline=true, where images are listed as [Image N] with callback IDs for onenote_get_image.
+        Save a page as Markdown or HTML to outputPath, with its images in a folder next to it, linked from the page: page.md or page.html gets page_images.
+        Or return it with inline=true, where images carry callback IDs for onenote_get_image: listed as [Image N] in Markdown, data-callback-id in HTML.
         """;
 
     private const string ImagesDescription = """
@@ -148,9 +148,9 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     }
 
     /// <summary>Whether <paramref name="format"/> asks for HTML. Checked before any OneNote call.</summary>
-    private static bool IsHtml(string format) => format.ToLowerInvariant() switch
+    private static bool IsHtml(string? format) => (format ?? "").Trim().ToLowerInvariant() switch
     {
-        "markdown" or "md" or "" => false,
+        "markdown" or "" => false,
         "html" => true,
         _ => throw new McpException($"format must be markdown or html, not \"{format}\""),
     };
@@ -191,7 +191,14 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         var html = IsHtml(format);
         CheckPageOutput(outputPath, inline);
         var pageId = FindPageByLink(link);
-        return inline ? $"page_id: `{pageId}`\n\n{PageText(pageId, html)}" : SavePage(pageId, outputPath, html);
+        if (!inline)
+        {
+            return SavePage(pageId, outputPath, html);
+        }
+
+        // In HTML, a comment after the doctype, so the page stays valid HTML
+        var text = PageText(pageId, html);
+        return html ? text.Insert(text.IndexOf('\n') + 1, $"<!-- page_id: {pageId} -->\n") : $"page_id: `{pageId}`\n\n{text}";
     }
 
     private string FindPageByLink(string link)

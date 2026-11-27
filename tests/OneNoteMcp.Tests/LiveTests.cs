@@ -171,7 +171,10 @@ public class LiveTests
     [LiveFact]
     public void OpensPageByLink() =>
         WithPage("# Live link test (deleting now)\n\nBody", pageId =>
-            Assert.StartsWith($"page_id: `{pageId}`", _tools.GetPageByLink(_client.GetHyperlink(pageId), inline: true)));
+        {
+            Assert.StartsWith($"page_id: `{pageId}`", _tools.GetPageByLink(_client.GetHyperlink(pageId), inline: true));
+            Assert.StartsWith($"<!DOCTYPE html>\n<!-- page_id: {pageId} -->\n<html>", _tools.GetPageByLink(_client.GetHyperlink(pageId), inline: true, format: "html"));
+        });
 
     [LiveFact]
     public void SavesPagesToFiles() =>

@@ -154,13 +154,13 @@ public static partial class HtmlToOneNote
                 // OneNote drops a bare <br> in text, but keeps one followed by a newline
                 "br" => "<br>\n",
                 "code" => $"<span style='font-family:Consolas'>{inner}</span>",
-                "a" => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("href")))}\">{inner}</a>",
+                "a" when SafeHtml.IsSafeHref(e.GetAttribute("href") ?? "") => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("href")))}\">{inner}</a>",
 
                 // Colors, highlights, fonts, and sizes, such as onenote_get_page's HTML keeps
                 "span" when Css.Inline(e.GetAttribute("style")) is { Length: > 0 } css => $"<span style=\"{WebUtility.HtmlEncode(css)}\">{inner}</span>",
 
-                // OneNote can't load an image from a URL here: keep it as a link, or its alt text inside a link.
-                "img" when inLink => WebUtility.HtmlEncode(alt),
+                // OneNote can't load an image from a URL here: keep it as a link, or its alt text inside a link or for a script link.
+                "img" when inLink || !SafeHtml.IsSafeHref(e.GetAttribute("src") ?? "") => WebUtility.HtmlEncode(alt),
                 "img" => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("src")))}\">{WebUtility.HtmlEncode(alt)}</a>",
                 _ => inner,
             });
@@ -202,7 +202,7 @@ public static partial class HtmlToOneNote
         private void CountLink() => Linked++;
 
         /// <remarks>
-        /// - From HTML, <c>br</c> is a line break inside the paragraph. From Markdown, a hard break splits the paragraph, as before.
+        /// - From HTML, <c>br</c> is a line break inside the paragraph. From Markdown, a hard break splits the paragraph.
         /// </remarks>
         private bool IsInlineNode(INode n) => IsInline(n) || (!fromMarkdown && n is IElement { LocalName: "br" });
 
@@ -290,6 +290,13 @@ public static partial class HtmlToOneNote
 
             void Flush()
             {
+                // A line break between blocks isn't a line of its own
+                if (run.All(n => n is IElement { LocalName: "br" } || (n is IText t && string.IsNullOrWhiteSpace(t.Data))))
+                {
+                    run.Clear();
+                    return;
+                }
+
                 var text = InlineHtml(run, inTable: _inTable && fromMarkdown, imageLinked: CountLink).Trim();
                 if (text.Length > 0)
                 {
@@ -371,7 +378,7 @@ public static partial class HtmlToOneNote
 
         /// <summary>A paragraph or container, with its alignment and OE style.</summary>
         /// <remarks>
-        /// - An empty <c>p</c> is a blank line, as onenote_get_page's HTML writes one.
+        /// - An empty <c>p</c>, or one with only <c>br</c>, is a blank line, as onenote_get_page's HTML writes one.
         /// - A <c>div class="indent"</c> nests its content under the OE before it, as OneNote indents.
         /// </remarks>
         private void Paragraph(IElement e, XElement parent)
@@ -392,7 +399,7 @@ public static partial class HtmlToOneNote
             var before = parent.Elements(One + "OE").Count();
             Blocks(e.ChildNodes, parent);
             var added = parent.Elements(One + "OE").Skip(before).ToList();
-            if (added.Count == 0 && e.LocalName == "p" && e.Children.Length == 0 && string.IsNullOrWhiteSpace(e.TextContent))
+            if (added.Count == 0 && e.LocalName == "p" && e.Children.All(c => c.LocalName == "br") && string.IsNullOrWhiteSpace(e.TextContent))
             {
                 added.Add(Oe(parent, "", style: _inQuote ? StyleIndex("blockquote") : null));
             }
@@ -538,14 +545,14 @@ public static partial class HtmlToOneNote
                 new XElement(One + "Columns", Enumerable.Range(0, columns).Select(i =>
                     new XElement(One + "Column", new XAttribute("index", i), new XAttribute("width", "120")))));
 
-            // From HTML, a th row is OneNote's own header row. From Markdown, header cells are bold text, as before.
+            // From HTML, a th row is OneNote's own header row. Other header cells, and all from Markdown, are bold text.
             var headerRow = !fromMarkdown && rows[0].Any(c => c.LocalName == "th");
             if (headerRow)
             {
                 tbl.SetAttributeValue("hasHeaderRow", "true");
             }
 
-            foreach (var row in rows)
+            foreach (var (row, rowIndex) in rows.Select((row, rowIndex) => (row, rowIndex)))
             {
                 var r = new XElement(One + "Row");
                 for (var i = 0; i < columns; i++)
@@ -553,7 +560,7 @@ public static partial class HtmlToOneNote
                     var cellChildren = new XElement(One + "OEChildren");
                     if (i < row.Count)
                     {
-                        if (row[i].LocalName == "th" && fromMarkdown)
+                        if (row[i].LocalName == "th" && !(headerRow && rowIndex == 0))
                         {
                             Oe(cellChildren, $"<b>{InlineHtml(row[i].ChildNodes, inTable: fromMarkdown, imageLinked: CountLink).Trim()}</b>");
                         }
@@ -587,7 +594,7 @@ public static partial class HtmlToOneNote
     /// <summary>A cell's background color, as OneNote's <c>#RRGGBB</c> shading. Null for none or another form.</summary>
     private static string? Shading(IElement cell) =>
         (Css.Value(cell.GetAttribute("style"), "background-color") ?? Css.Value(cell.GetAttribute("style"), "background")) is { } color
-        && HexColor().IsMatch(color) ? color : null;
+        && Css.IsHexColor(color) ? color : null;
 
     /// <summary>An image's size from its <c>style</c>, in points, as onenote_get_page's HTML writes it.</summary>
     private static XElement? ImageSize(IElement img) =>
@@ -604,7 +611,4 @@ public static partial class HtmlToOneNote
     // Not \s, which would turn a non-breaking space into a plain one
     [GeneratedRegex(@"[ \t\r\n\f]+")]
     private static partial Regex Whitespace();
-
-    [GeneratedRegex("^#[0-9A-Fa-f]{6}$")]
-    private static partial Regex HexColor();
 }

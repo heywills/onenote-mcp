@@ -162,17 +162,16 @@ public static class PageHtml
             Content(oe, indent: oe != repeatedTitle);
         }
 
-        private static string Text(XElement oe) => string.Concat(oe.Elements(One + "T").Select(t => t.Value));
+        private static string Text(XElement oe) => SafeHtml.Inline(string.Concat(oe.Elements(One + "T").Select(t => t.Value)));
 
-        /// <summary>The OE's own style plus its alignment, as a <c>style</c> attribute.</summary>
+        /// <summary>The OE's font, color, and alignment, as a <c>style</c> attribute.</summary>
         private static string Style(XElement oe)
         {
-            // OneNote can wrap a long style across lines
-            var css = string.Join(";", ((string?)oe.Attribute("style") ?? "").Split(';')
-                .Select(d => string.Join(' ', d.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)))
-                .Where(d => d.Length > 0));
-            // OneNote often copies the alignment into the style already
-            if ((string?)oe.Attribute("alignment") is { } alignment and not "left" && !css.Contains("text-align", StringComparison.OrdinalIgnoreCase))
+            var style = (string?)oe.Attribute("style");
+            var css = Css.Paragraph(style);
+            // OneNote often copies the alignment into the style
+            var alignment = (Css.Value(style, "text-align") ?? (string?)oe.Attribute("alignment"))?.ToLowerInvariant();
+            if (alignment is "center" or "right")
             {
                 css = css.Length > 0 ? $"{css};text-align:{alignment}" : $"text-align:{alignment}";
             }
@@ -245,7 +244,7 @@ public static class PageHtml
                 foreach (var cell in row.Elements(One + "Cell"))
                 {
                     var tag = header && r == 0 ? "th" : "td";
-                    var shading = (string?)cell.Attribute("shadingColor") is { } color ? $" style=\"background-color:{Encode(color)}\"" : "";
+                    var shading = (string?)cell.Attribute("shadingColor") is { } color && Css.IsHexColor(color) ?$" style=\"background-color:{Encode(color)}\"" : "";
                     _html.Append($"<{tag}{shading}>\n");
                     foreach (var children in cell.Elements(One + "OEChildren"))
                     {

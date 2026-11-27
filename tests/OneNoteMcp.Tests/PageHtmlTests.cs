@@ -29,7 +29,7 @@ public class PageHtmlTests
     [Fact]
     public void KeepsParagraphStyleAlignmentAndInlineHtml() =>
         Assert.Equal(
-            "<p style=\"font-family:Calibri;font-size:12.0pt;color:#14324D;text-align:center\">Big <span style='color:red'>red</span></p>\n",
+            "<p style=\"font-family:Calibri;font-size:12.0pt;color:#14324D;text-align:center\">Big <span style=\"color:red\">red</span></p>\n",
             Body("""<one:OE quickStyleIndex="1" alignment="center" style="font-family:Calibri;font-size:12.0pt;&#xA;color:#14324D"><one:T><![CDATA[Big <span style='color:red'>red</span>]]></one:T></one:OE>"""));
 
     [Fact]
@@ -92,6 +92,20 @@ public class PageHtmlTests
     [InlineData("bin", "<a href=\"My%20page_images/image-2.bin\">Image 2: unsupported type</a>")]
     public void LinksSavedImages(string extension, string html) =>
         Assert.Equal(html, PageHtml.ImageLink(new ImageRef("cb", 2, null, null), "My page_images", extension));
+
+    [Fact]
+    public void KeepsOnlySafeInlineHtml() =>
+        Assert.Equal(
+            "<p><b>b</b>bad <a href=\"https://x.test/?a=1&amp;b=2\">ok</a> <span style=\"color:red\">s</span>&nbsp;é</p>\n",
+            Body("""<one:OE><one:T><![CDATA[<b>b</b><script>x()</script><a href="java&#9;script:alert(1)">bad</a> <a href="https://x.test/?a=1&b=2" onclick="x()">ok</a> <span style="color:red;position:fixed" lang="en-US">s</span><img src=x onerror=y>&nbsp;é]]></one:T></one:OE>"""));
+
+    [Fact]
+    public void FiltersParagraphStylesAndShading() =>
+        Assert.Equal("<p style=\"color:red\">P</p>\n<table>\n<tr><td>\n<p>C</p>\n</td></tr>\n</table>\n",
+            Body("""
+                <one:OE style="position:fixed;color:red;background:url(https://x.test/a.png)"><one:T>P</one:T></one:OE>
+                <one:OE><one:Table><one:Row><one:Cell shadingColor="red;background:url(x)"><one:OEChildren><one:OE><one:T>C</one:T></one:OE></one:OEChildren></one:Cell></one:Row></one:Table></one:OE>
+                """));
 
     [Fact]
     public void DescribesImagesItCouldntSave() =>
