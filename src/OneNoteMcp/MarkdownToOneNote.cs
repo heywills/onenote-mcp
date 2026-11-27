@@ -9,7 +9,7 @@ namespace OneNoteMcp;
 /// </summary>
 public static class MarkdownToOneNote
 {
-    private const char ByteOrderMark = '﻿';
+    private const char ByteOrderMark = '\uFEFF';
 
     /// <summary>Pipe tables and strikethrough.</summary>
     /// <remarks>The other emphasis extras would make ~, ^, ++, and == into formatting.</remarks>
