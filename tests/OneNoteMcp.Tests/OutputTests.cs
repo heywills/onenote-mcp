@@ -140,6 +140,10 @@ public class OutputTests
     }
 
     [Fact]
+    public void NeedsANameBeforeTheExtension() =>
+        Assert.Contains("name before the extension", Assert.Throws<McpException>(() => _tools.GetPage("{page}", @"C:\work\.md")).Message);
+
+    [Fact]
     public void RejectsPathAndInlineTogether() =>
         Assert.Contains("not both", Assert.Throws<McpException>(() => _tools.GetPage("{page}", @"C:\work\page.md", inline: true)).Message);
 }

@@ -149,12 +149,25 @@ public class MarkdownTests
     }
 
     [Theory]
+    [InlineData("page_images", "png", "![Image 2](page_images/image-2.png)")]
+    [InlineData("Sprint #4_images", "png", "![Image 2](Sprint%20%234_images/image-2.png)")]
+    [InlineData("50% (draft)_images", "jpg", "![Image 2](50%25%20%28draft%29_images/image-2.jpg)")]
+    [InlineData("Café_images", "png", "![Image 2](Caf%C3%A9_images/image-2.png)")]
+    [InlineData("page_images", "bin", "[Image 2: unsupported type](page_images/image-2.bin)")]
+    public void LinksSavedImages(string folder, string extension, string markdown) =>
+        Assert.Equal(markdown, PageMarkdown.ImageLink(2, folder, extension));
+
+    [Theory]
     [InlineData(new byte[] { 0x89, 0x50, 0x4E, 0x47 }, "png")]
     [InlineData(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }, "jpg")]
     [InlineData(new byte[] { 0x49, 0x49, 0x2A, 0x00 }, "tif")]
     [InlineData(new byte[] { 0x00, 0x01 }, "bin")]
     public void PicksImageExtensions(byte[] data, string extension) =>
         Assert.Equal(extension, Images.Extension(data));
+
+    [Fact]
+    public void ReportsImagesItCantShrink() =>
+        Assert.Contains("Can't shrink", Assert.Throws<ModelContextProtocol.McpException>(() => Images.FitToSize(new byte[2048], 1)).Message);
 
     [Fact]
     public void RepeatsThePlaceholderForAnImageShownAgain() =>

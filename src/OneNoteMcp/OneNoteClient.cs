@@ -26,14 +26,18 @@ public sealed class OneNoteClient
     public byte[] GetBinaryPageContent(string pageId, string callbackId)
     {
         var base64 = Call(app => { app.GetBinaryPageContent(pageId, callbackId, out string b64); return b64; });
+        byte[] data;
         try
         {
-            return Convert.FromBase64String(base64);
+            data = Convert.FromBase64String(base64);
         }
         catch (Exception e) when (e is FormatException or ArgumentNullException)
         {
             throw new McpException("OneNote returned unreadable image data", e);
         }
+
+        // An image that hasn't synced can come back empty
+        return data.Length > 0 ? data : throw new McpException("OneNote returned no image data. Open the page in OneNote desktop, then retry.");
     }
 
     public string FindPages(string query, string startNodeId = "") =>

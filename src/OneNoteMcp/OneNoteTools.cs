@@ -104,10 +104,6 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
 
     /// <summary>Saves one image to the page's image folder.</summary>
     /// <returns>The image's Markdown, and whether its file was saved</returns>
-    /// <remarks>
-    /// - The link is percent-encoded, so a page name with <c>#</c>, <c>%</c>, or spaces still links.
-    /// - A type viewers can't show is a plain link, not an embed.
-    /// </remarks>
     private (string Markdown, bool Saved) SaveImage(string pageId, ImageRef img, string outputPath, string folder)
     {
         byte[] data;
@@ -121,18 +117,16 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         }
 
         var extension = Images.Extension(data);
-        var name = $"image-{img.Index}.{extension}";
         try
         {
-            PageFiles.Write(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outputPath))!, folder, name), data);
+            PageFiles.Write(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outputPath))!, folder, $"image-{img.Index}.{extension}"), data);
         }
         catch (McpException)
         {
             return ($"[Image {img.Index}: couldn't save]", false);
         }
 
-        var link = $"{Uri.EscapeDataString(folder)}/{name}";
-        return (extension == "bin" ? $"[Image {img.Index}: unsupported type]({link})" : $"![Image {img.Index}]({link})", true);
+        return (PageMarkdown.ImageLink(img.Index, folder, extension), true);
     }
 
     private string PageText(string pageId)
@@ -347,6 +341,12 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         }
 
         PageFiles.Check(outputPath, nameof(outputPath));
+
+        // The image folder takes its name from this
+        if (Path.GetFileNameWithoutExtension(outputPath).Length == 0)
+        {
+            throw new McpException($"outputPath needs a name before the extension, such as page.md, not \"{Path.GetFileName(outputPath)}\"");
+        }
     }
 
     /// <summary>The content, or the text of <paramref name="inputPath"/> when one is given.</summary>

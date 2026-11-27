@@ -61,6 +61,17 @@ public static partial class PageMarkdown
         return ($"# {EscapeClosingHashes(Escape(title))}\n\n{writer}".Trim(), writer.Images);
     }
 
+    /// <summary>Markdown for an image saved as <c>image-N.extension</c> in <paramref name="folder"/>, next to the page file.</summary>
+    /// <remarks>
+    /// - The folder is percent-encoded, so a page name with <c>#</c>, <c>%</c>, or spaces still links.
+    /// - A type viewers can't show (<c>bin</c>) is a plain link, not an embed.
+    /// </remarks>
+    public static string ImageLink(int index, string folder, string extension)
+    {
+        var link = $"{Uri.EscapeDataString(folder)}/image-{index}.{extension}";
+        return extension == "bin" ? $"[Image {index}: unsupported type]({link})" : $"![Image {index}]({link})";
+    }
+
     /// <summary>
     /// Strips the inline HTML OneNote keeps inside text elements.
     /// </summary>
