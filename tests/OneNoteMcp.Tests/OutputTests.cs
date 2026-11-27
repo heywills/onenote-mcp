@@ -296,6 +296,15 @@ public class OutputTests
         bitmap.Save(gif, System.Drawing.Imaging.ImageFormat.Gif);
         Assert.True(gif.Length < Images.MaxEmbedKb * 1024, $"GIF is {gif.Length / 1024} KB");
 
+        // The test only reaches the shrink if the plain conversion is over the limit
+        using (var decoded = System.Drawing.Image.FromStream(new MemoryStream(gif.ToArray())))
+        using (var copy = new System.Drawing.Bitmap(decoded))
+        using (var png = new MemoryStream())
+        {
+            copy.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+            Assert.True(png.Length > Images.MaxEmbedKb * 1024, $"PNG is only {png.Length / 1024} KB");
+        }
+
         var image = Images.ForOneNote(gif.ToArray());
         Assert.Equal("png", image?.Format);
         Assert.InRange(image!.Value.Data.Length, 1, Images.MaxEmbedKb * 1024);
