@@ -87,10 +87,13 @@ public class HtmlToOneNoteTests
     [Fact]
     public void KeepsPreLinesAndSpaces()
     {
-        var page = Convert("<pre>if (x)\n  y();</pre>");
+        var page = Convert("<pre>if (x)\n  y();</pre><pre>z();</pre>");
 
+        Assert.Equal(["if&nbsp;(x)", "&nbsp;&nbsp;y();", "", "z();"], Texts(page));
+        var code = page.Elements(One + "QuickStyleDef").Single(d => (string?)d.Attribute("name") == "code");
+        Assert.Equal("Consolas", (string?)code.Attribute("font"));
         Assert.Equal(
-            ["<span style='font-family:Consolas'>if&nbsp;(x)</span>", "<span style='font-family:Consolas'>&nbsp;&nbsp;y();</span>"],
-            Texts(page));
+            [code.Attribute("index")!.Value, code.Attribute("index")!.Value, null, code.Attribute("index")!.Value],
+            page.Descendants(One + "OE").Select(o => (string?)o.Attribute("quickStyleIndex")));
     }
 }

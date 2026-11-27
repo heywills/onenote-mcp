@@ -50,6 +50,31 @@ public class LiveTests
             Literal \*stars\*, a # hash, snake_case, and 2 < 3 & 4
 
             \# Not a heading
+
+            `npm install`
+
+            ```
+            first block
+            ```
+
+            ```
+            second block
+            ```
+
+            > - quoted item
+            > - another
+
+            > First quoted paragraph with *a* and *b*
+            >
+            > Second quoted paragraph
+
+            ---
+
+            \>note and a ---
+
+            \---
+
+            [A link](https://x.test/a%20b)
             """.Replace("\r\n", "\n");
 
         // OneNote numbers each list itself, from 1

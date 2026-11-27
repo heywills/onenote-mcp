@@ -67,6 +67,21 @@ public class MarkdownTests
     [InlineData("***bold italic*** and **[bold link](https://x.test/?a=1&b=2)**")]
     [InlineData("> Quoted line\n\nAfter the quote")]
     [InlineData("- [ ] Task item")]
+    [InlineData("`npm install`")]
+    [InlineData("## `Config`")]
+    [InlineData("- `foo`")]
+    [InlineData("Run ``a `tick` b`` now")]
+    [InlineData("```\na\n```\n\n```\nb\n```")]
+    [InlineData("> *a* and *b*")]
+    [InlineData("> - item one\n> - item two\n\nAfter")]
+    [InlineData("> First paragraph\n>\n> Second paragraph")]
+    [InlineData("> - quoted item\n\n> Separate quote")]
+    [InlineData(@"\>note")]
+    [InlineData(@"\---")]
+    [InlineData(@"- 1\. step")]
+    [InlineData(@"\~\~not struck\~\~ and see [1\](x) and \<b>tag")]
+    [InlineData("x^2^ and ~sub~ and ==mark== and ++ins++")]
+    [InlineData("a\n\n---\n\nb")]
     public void RoundTripsEdgeCases(string markdown) =>
         Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
 
@@ -77,6 +92,41 @@ public class MarkdownTests
         HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml("1. A\n2. B\n\nText\n\n1. C"));
 
         Assert.Equal(["0", "0", "1"], page.Descendants(XName.Get("Number", Ns)).Select(n => (string?)n.Attribute("numberSequence")));
+    }
+
+    [Fact]
+    public void DropsBoldThatCoversAWholeHeaderCell() =>
+        Assert.Equal("# Sample\n\n| a and b | *c* |\n| --- | --- |\n| 1 | 2 |", RoundTrip("| **a** and **b** | *c* |\n| --- | --- |\n| 1 | 2 |"));
+
+    [Fact]
+    public void WrapsLinkDestinationsWithSpaces()
+    {
+        var xml = $"""
+            <one:Page xmlns:one="{Ns}" name="L"><one:Title/>
+              <one:Outline><one:OEChildren>
+                <one:OE><one:T><![CDATA[See <a href="onenote:///C:/My Notes/a.one#x">Page (old)</a> and <a href="https://x.test/a_(b)">this</a>]]></one:T></one:OE>
+              </one:OEChildren></one:Outline>
+            </one:Page>
+            """;
+
+        Assert.Equal("# L\n\nSee [Page (old)](<onenote:///C:/My Notes/a.one#x>) and [this](<https://x.test/a_(b)>)", PageMarkdown.Convert(xml).Markdown);
+    }
+
+    [Fact]
+    public void TreatsOnlyMonospaceFontsAsCode()
+    {
+        var xml = $"""
+            <one:Page xmlns:one="{Ns}" name="F"><one:Title/>
+              <one:QuickStyleDef index="0" name="p" font="Cascadia Mono"/>
+              <one:Outline><one:OEChildren>
+                <one:OE quickStyleIndex="0"><one:T><![CDATA[Body in a monospace page font]]></one:T></one:OE>
+                <one:OE style="font-family:'Monotype Corsiva'"><one:T><![CDATA[Script font]]></one:T></one:OE>
+                <one:OE style="font-family:'Cascadia Code'"><one:T><![CDATA[Real code]]></one:T></one:OE>
+              </one:OEChildren></one:Outline>
+            </one:Page>
+            """;
+
+        Assert.Equal("# F\n\nBody in a monospace page font\n\nScript font\n\n`Real code`", PageMarkdown.Convert(xml).Markdown);
     }
 
     [Fact]
@@ -91,8 +141,9 @@ public class MarkdownTests
     public void EscapesTextTypedInOneNote()
     {
         var xml = $"""
-            <one:Page xmlns:one="{Ns}" name="Typed">
+            <one:Page xmlns:one="{Ns}" name="Typed"><one:Title/>
               <one:Outline><one:OEChildren>
+                <one:OE><one:T><![CDATA[________________________]]></one:T></one:OE>
                 <one:OE><one:T><![CDATA[# 1 priority: 2 * 3 = 6]]></one:T></one:OE>
                 <one:OE><one:T><![CDATA[1. Not a real list]]></one:T></one:OE>
                 <one:OE><one:List><one:Number numberSequence="0" numberFormat="##." text="a."/></one:List><one:T><![CDATA[Letter item]]></one:T></one:OE>
@@ -101,6 +152,8 @@ public class MarkdownTests
             """;
 
         Assert.Equal(@"# Typed
+
+---
 
 \# 1 priority: 2 \* 3 = 6
 
@@ -112,7 +165,12 @@ public class MarkdownTests
     [Fact]
     public void SplitsLeadingTitle()
     {
-        Assert.Equal(("My page", "\nBody"), MarkdownToOneNote.SplitTitle("\n# My page\n\nBody"));
+        foreach (var markdown in new[] { "\n# My page\n\nBody", "﻿# My page\n\nBody", "#\tMy page\n\nBody", "  # My page #\n\nBody", "My page\n===\n\nBody" })
+        {
+            var (title, body) = MarkdownToOneNote.SplitTitle(markdown);
+            Assert.Equal(("My page", "Body"), (title, body.Trim()));
+        }
+
         Assert.Null(MarkdownToOneNote.SplitTitle("## Not a title\n# Later").Title);
     }
 
@@ -133,20 +191,24 @@ public class MarkdownTests
               <one:QuickStyleDef index="0" name="PageTitle" font="Aptos"/>
               <one:QuickStyleDef index="1" name="p" font="Aptos"/>
               <one:QuickStyleDef index="2" name="h2" font="Calibri"/>
+              <one:QuickStyleDef index="3" name="code" font="Consolas"/>
+              <one:Title><one:OE><one:T><![CDATA[Saved]]></one:T></one:OE></one:Title>
               <one:Outline><one:OEChildren>
                 <one:OE quickStyleIndex="1"><one:T><![CDATA[<span style='font-family:Aptos'>A </span><span style='font-weight:bold;
             font-family:Aptos'>bold</span><span style='font-family:Aptos'> and </span><span style='font-family:Consolas'>code</span>]]></one:T></one:OE>
                 <one:OE quickStyleIndex="2"><one:T><![CDATA[Heading]]></one:T></one:OE>
-                <one:OE quickStyleIndex="1" style="font-family:Consolas;font-size:11.0pt"><one:T><![CDATA[if&nbsp;(x)]]></one:T></one:OE>
-                <one:OE quickStyleIndex="1" style="font-family:Consolas;font-size:11.0pt"><one:T><![CDATA[&nbsp;&nbsp;y();]]></one:T></one:OE>
+                <one:OE quickStyleIndex="3" style="font-family:Consolas;font-size:11.0pt"><one:T><![CDATA[if&nbsp;(x)]]></one:T></one:OE>
+                <one:OE quickStyleIndex="3" style="font-family:Consolas;font-size:11.0pt"><one:T><![CDATA[&nbsp;&nbsp;y();]]></one:T></one:OE>
+                <one:OE quickStyleIndex="1" style="font-family:Consolas;font-size:11.0pt"><one:T><![CDATA[npm install]]></one:T></one:OE>
                 <one:OE quickStyleIndex="1" style="font-weight:bold"><one:T><![CDATA[Whole line bold]]></one:T></one:OE>
                 <one:OE quickStyleIndex="1"><one:List><one:Number numberSequence="0" numberFormat="##." text="7."/></one:List><one:T><![CDATA[Seventh]]></one:T></one:OE>
               </one:OEChildren></one:Outline>
             </one:Page>
             """;
 
+        // Only the Code style makes a code block. Other monospace text is inline code.
         Assert.Equal(
-            "# Saved\n\nA **bold** and `code`\n\n## Heading\n\n```\nif (x)\n  y();\n```\n\n**Whole line bold**\n\n7. Seventh",
+            "# Saved\n\nA **bold** and `code`\n\n## Heading\n\n```\nif (x)\n  y();\n```\n\n`npm install`\n\n**Whole line bold**\n\n7. Seventh",
             PageMarkdown.Convert(xml).Markdown);
     }
 

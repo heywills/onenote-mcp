@@ -13,10 +13,11 @@ public sealed record ImageRef(string CallbackId, int Index, double? Width, doubl
 /// Converts OneNote page XML to Markdown plus image references.
 /// </summary>
 /// <remarks>
-/// - Headings come from the OE's QuickStyleDef name (<c>h1</c>-<c>h6</c>).
+/// - Block types come from the OE's QuickStyleDef name: <c>h1</c>-<c>h6</c>, <c>blockquote</c>, and <c>code</c> (fenced code).
 /// - Lists nest by indenting under the parent item. Paragraphs OneNote indents outside a list stay flush, or Markdown would read them as code.
-/// - Code lines are OEs or text in a monospace font. Consecutive ones become one fenced block.
+/// - Other monospace text becomes inline code.
 /// - OneNote keeps inline formatting as styled spans, and whole-paragraph formatting on the OE's <c>style</c>.
+/// - Plain text is escaped, so text that looks like Markdown stays text.
 /// </remarks>
 public static partial class PageMarkdown
 {
@@ -28,9 +29,18 @@ public static partial class PageMarkdown
         var title = (string?)root.Attribute("name") ?? (string?)root.Attribute("ID") ?? "Untitled";
         var styles = root.Elements(One + "QuickStyleDef").ToDictionary(
             q => (string?)q.Attribute("index") ?? "",
-            q => (Name: (string?)q.Attribute("name") ?? "", Font: (string?)q.Attribute("font") ?? ""));
+            q => (string?)q.Attribute("name") ?? "");
 
-        var writer = new Writer(styles, title);
+        // Without a Title element, OneNote names the page after its first line, so that line repeats the name.
+        var repeatedTitle = root.Element(One + "Title") is null
+            ? root.Elements(One + "Outline").FirstOrDefault()?.Element(One + "OEChildren")?.Element(One + "OE")
+            : null;
+        if (repeatedTitle is not null && CleanText(string.Concat(repeatedTitle.Elements(One + "T").Select(t => t.Value))).Trim() != title.Trim())
+        {
+            repeatedTitle = null;
+        }
+
+        var writer = new Writer(styles, repeatedTitle);
         foreach (var outline in root.Descendants(One + "Outline"))
         {
             foreach (var children in outline.Elements(One + "OEChildren"))
@@ -54,12 +64,12 @@ public static partial class PageMarkdown
     public static string CleanText(string text) =>
         System.Net.WebUtility.HtmlDecode(Tags().Replace(text, "")).Replace(' ', ' ');
 
-    private sealed class Writer(Dictionary<string, (string Name, string Font)> styles, string title)
+    private sealed class Writer(Dictionary<string, string> styles, XElement? repeatedTitle)
     {
         private readonly List<string> _lines = [];
         private string _kind = "";
         private string _codeIndent = "";
-        private bool _titleChecked;
+        private bool _quote;
         private bool _topLevelBullet;
 
         public List<ImageRef> Images { get; } = [];
@@ -70,16 +80,20 @@ public static partial class PageMarkdown
             foreach (var oe in oeChildren.Elements(One + "OE"))
             {
                 number = oe.Element(One + "List")?.Element(One + "Number") is null ? 0 : number + 1;
-                Oe(oe, indent, number);
+                if (oe != repeatedTitle)
+                {
+                    Oe(oe, indent, number);
+                }
             }
         }
 
         /// <param name="number">Position in a numbered list, for items without OneNote's number text</param>
         private void Oe(XElement oe, string indent, int number)
         {
-            var style = styles.TryGetValue((string?)oe.Attribute("quickStyleIndex") ?? "", out var s) ? s : (Name: "", Font: "");
-            var oeStyle = ((string?)oe.Attribute("style") ?? "") + ";" + (style.Font.Length > 0 ? $"font-family:{style.Font}" : "");
+            var styleName = styles.GetValueOrDefault((string?)oe.Attribute("quickStyleIndex") ?? "") ?? "";
+            var quote = styleName == "blockquote";
             var list = oe.Element(One + "List");
+
             // OneNote's number text can be a letter or roman numeral ("a.", "iv."): Markdown takes digits only.
             var numberText = (string?)list?.Element(One + "Number")?.Attribute("text");
             var marker = list?.Element(One + "Number") is not null
@@ -88,21 +102,29 @@ public static partial class PageMarkdown
 
             foreach (var t in oe.Elements(One + "T"))
             {
-                var (text, isCode) = InlineMarkdown(t.Value, oeStyle + ";" + (string?)t.Attribute("style"));
+                if (styleName == "code" && marker is null)
+                {
+                    CodeLine(indent, Parser.ParseDocument($"<body>{t.Value}</body>").Body!.TextContent.Replace(' ', ' '));
+                    continue;
+                }
+
+                // OneNote copies the quote style's italic onto the text
+                var text = InlineMarkdown(t.Value, (string?)oe.Attribute("style") + ";" + (string?)t.Attribute("style"), ignoreUniformItalic: quote).Trim();
                 if (marker is not null)
                 {
-                    ListItem(indent, marker, text);
+                    ListItem(indent, marker, EscapeLineStart(text), quote);
                 }
-                else if (isCode)
+                else if (text.Length == 0)
                 {
-                    CodeLine(indent, text);
+                    Blank();
                 }
-                else if (!string.IsNullOrWhiteSpace(text))
+                else if (Regex.Match(styleName, "^h([1-6])$") is { Success: true } level)
                 {
-                    var level = Regex.Match(style.Name, "^h([1-6])$");
-                    Paragraph(indent, level.Success ? $"{new string('#', int.Parse(level.Groups[1].Value))} {text.Trim()}"
-                        : style.Name == "blockquote" ? $"> {Unwrap(text.Trim(), "*")}" // OneNote copies the style's italic onto the text
-                        : EscapeLineStart(text.Trim()));
+                    Paragraph(indent, $"{new string('#', int.Parse(level.Groups[1].Value))} {text}", false);
+                }
+                else
+                {
+                    Paragraph(indent, HorizontalRule().IsMatch(text) ? "---" : EscapeLineStart(text), quote);
                 }
             }
 
@@ -117,7 +139,7 @@ public static partial class PageMarkdown
                         Table(child, indent);
                         break;
                     case "InsertedFile":
-                        Paragraph(indent, $"[Attached: {(string?)child.Attribute("preferredName") ?? "file"}]");
+                        Paragraph(indent, $"[Attached: {Escape((string?)child.Attribute("preferredName") ?? "file")}]", false);
                         break;
                     case "OEChildren":
                         // Only list items indent their children. Indented text elsewhere would read as code.
@@ -138,26 +160,24 @@ public static partial class PageMarkdown
             var size = img.Element(One + "Size");
             var reference = new ImageRef(id, Images.Count + 1, ToDouble(size?.Attribute("width")), ToDouble(size?.Attribute("height")));
             Images.Add(reference);
-            Paragraph(indent, $"[Image {reference.Index}]");
+            Paragraph(indent, $"[Image {reference.Index}]", false);
         }
 
         private void Table(XElement table, string indent)
         {
             var rows = table.Elements(One + "Row").Select((row, r) => row.Elements(One + "Cell").Select(cell =>
             {
-                var text = string.Join(" ", cell.Descendants(One + "OE").SelectMany(oe => oe.Elements(One + "T").Select(t =>
-                    InlineMarkdown(t.Value, r == 0 ? "" : (string?)oe.Attribute("style") ?? "").Text.Trim())));
-                text = Whitespace().Replace(text, " ").Trim().Replace("|", "\\|");
-
                 // The header row renders bold already
-                return r == 0 && text.Length > 4 && text.StartsWith("**") && text.EndsWith("**") ? text[2..^2] : text;
+                var text = string.Join(" ", cell.Descendants(One + "OE").SelectMany(oe => oe.Elements(One + "T").Select(t =>
+                    InlineMarkdown(t.Value, (string?)oe.Attribute("style") ?? "", ignoreUniformBold: r == 0).Trim())));
+                return Whitespace().Replace(text, " ").Trim().Replace("|", "\\|");
             }).ToList()).ToList();
             if (rows.Count == 0)
             {
                 return;
             }
 
-            Separate();
+            Separate(false);
             var columns = rows.Max(r => r.Count);
             foreach (var (row, i) in rows.Select((row, i) => (row, i)))
             {
@@ -175,32 +195,22 @@ public static partial class PageMarkdown
             }
         }
 
-        private void Paragraph(string indent, string text)
+        private void Paragraph(string indent, string text, bool quote)
         {
-            // The page body often repeats the title on its first line.
-            if (!_titleChecked)
-            {
-                _titleChecked = true;
-                if (text.Trim() == title.Trim())
-                {
-                    return;
-                }
-            }
-
-            Separate();
-            _lines.Add(indent + text);
+            Separate(quote);
+            _lines.Add((quote ? "> " : "") + indent + text);
             _kind = "paragraph";
+            _quote = quote;
         }
 
-        private void ListItem(string indent, string marker, string text)
+        private void ListItem(string indent, string marker, string text, bool quote)
         {
-            _titleChecked = true;
             var bullet = marker == "- ";
 
-            // A new list, or a top-level switch between bullets and numbers
-            if (_kind != "list" || (indent.Length == 0 && bullet != _topLevelBullet))
+            // A new list, a change in or out of a quote, or a top-level switch between bullets and numbers
+            if (_kind != "list" || quote != _quote || (indent.Length == 0 && bullet != _topLevelBullet))
             {
-                Separate();
+                Separate(quote);
             }
 
             if (indent.Length == 0)
@@ -208,21 +218,21 @@ public static partial class PageMarkdown
                 _topLevelBullet = bullet;
             }
 
-            _lines.Add(indent + marker + text.Trim());
+            _lines.Add((quote ? "> " : "") + indent + marker + text);
             _kind = "list";
+            _quote = quote;
         }
 
         private void CodeLine(string indent, string text)
         {
-            if (text.Length == 0 && _kind != "code")
-            {
-                return; // a blank monospace line outside code
-            }
-
-            _titleChecked = true;
             if (_kind != "code")
             {
-                Separate();
+                if (text.Trim().Length == 0)
+                {
+                    return; // a blank code line outside a block
+                }
+
+                Separate(false);
                 _codeIndent = indent;
                 _lines.Add(indent + "```");
             }
@@ -232,9 +242,23 @@ public static partial class PageMarkdown
         }
 
         /// <summary>
+        /// A blank OE ends an open code block or quote, so back-to-back ones stay separate.
+        /// </summary>
+        private void Blank()
+        {
+            if (_kind == "code")
+            {
+                Separate(false);
+            }
+
+            _quote = false;
+        }
+
+        /// <summary>
         /// Closes an open code block and adds a blank line before the next block.
         /// </summary>
-        private void Separate()
+        /// <param name="quote">Whether the next block is quoted. Two quoted blocks in a row stay one quote.</param>
+        private void Separate(bool quote)
         {
             if (_kind == "code")
             {
@@ -243,15 +267,16 @@ public static partial class PageMarkdown
 
             if (_lines.Count > 0 && _lines[^1].Length > 0)
             {
-                _lines.Add("");
+                _lines.Add(quote && _quote && _kind != "code" ? ">" : "");
             }
 
             _kind = "";
+            _quote = false;
         }
 
         public override string ToString()
         {
-            Separate();
+            Separate(false);
             return string.Join("\n", _lines).Trim();
         }
     }
@@ -259,63 +284,36 @@ public static partial class PageMarkdown
     /// <summary>
     /// Converts the HTML inside a text element to Markdown.
     /// </summary>
-    /// <returns>The Markdown, and whether all of its text is monospace (a code line).</returns>
-    private static (string Text, bool IsCode) InlineMarkdown(string html, string paragraphStyle)
+    /// <param name="ignoreUniformItalic">Drop italic that covers all of the text</param>
+    /// <param name="ignoreUniformBold">Drop bold that covers all of the text</param>
+    private static string InlineMarkdown(string html, string paragraphStyle, bool ignoreUniformItalic = false, bool ignoreUniformBold = false)
     {
         var body = Parser.ParseDocument($"<body>{html}</body>").Body!;
         var paragraph = StyleOf(paragraphStyle);
-        var state = new InlineState();
-        var text = Inline(body.ChildNodes, paragraph.Code, state);
+        var ignore = (
+            Bold: ignoreUniformBold && (paragraph.Bold || AllTextHas(body, (s, tag) => s.Bold || tag is "b" or "strong")),
+            Italic: ignoreUniformItalic && (paragraph.Italic || AllTextHas(body, (s, tag) => s.Italic || tag is "i" or "em")));
 
-        if (!state.HasPlainText && !state.HasCodeText)
+        var text = Inline(body.ChildNodes, paragraph.Code, ignore);
+        if (paragraph.Code)
         {
-            return ("", paragraph.Code || state.HasCodeSpace); // blank line, kept inside a code block
+            return CodeSpan(text);
         }
 
-        if (state.HasPlainText)
-        {
-            text = Wrap(text, paragraph.Strike ? "~~" : "");
-            text = Wrap(text, paragraph.Italic ? "*" : "");
-            return (Wrap(text, paragraph.Bold ? "**" : ""), false);
-        }
-
-        // A code line: plain text, spaces kept
-        return (body.TextContent.Replace(' ', ' '), true);
+        text = Wrap(text, paragraph.Strike ? "~~" : "");
+        text = Wrap(text, paragraph.Italic && !ignore.Italic ? "*" : "");
+        return Wrap(text, paragraph.Bold && !ignore.Bold ? "**" : "");
     }
 
-    private sealed class InlineState
-    {
-        public bool HasPlainText { get; set; }
-
-        public bool HasCodeText { get; set; }
-
-        /// <summary>Any monospace text, even just spaces: a blank line inside code.</summary>
-        public bool HasCodeSpace { get; set; }
-    }
-
-    private static string Inline(INodeList nodes, bool inCode, InlineState state)
+    private static string Inline(INodeList nodes, bool inCode, (bool Bold, bool Italic) ignore)
     {
         var sb = new StringBuilder();
         foreach (var node in nodes)
         {
             if (node is IText t)
             {
-                var text = t.Data.Replace(' ', ' ');
-                state.HasCodeSpace |= inCode;
-                if (text.Trim().Length > 0)
-                {
-                    if (inCode)
-                    {
-                        state.HasCodeText = true;
-                    }
-                    else
-                    {
-                        state.HasPlainText = true;
-                    }
-                }
-
-                text = Whitespace().Replace(text, " ");
-                sb.Append(inCode ? text : EscapeInline(text));
+                var text = Whitespace().Replace(t.Data.Replace(' ', ' '), " ");
+                sb.Append(inCode ? text : Escape(text));
                 continue;
             }
 
@@ -327,35 +325,53 @@ public static partial class PageMarkdown
             var style = StyleOf(e.GetAttribute("style") ?? "");
             var tag = e.LocalName;
             var code = inCode || style.Code || tag == "code";
-            var inner = Inline(e.ChildNodes, code, state);
+            var inner = Inline(e.ChildNodes, code, ignore);
 
             if (tag == "br")
             {
                 sb.Append(' ');
-                continue;
             }
-
-            if (tag == "a")
+            else if (tag == "a")
             {
-                sb.Append($"[{inner.Trim()}]({e.GetAttribute("href")})");
-                continue;
+                sb.Append($"[{inner.Trim()}]({LinkDestination(e.GetAttribute("href") ?? "")})");
             }
-
-            if (code && !inCode)
+            else if (code && !inCode)
             {
-                inner = Wrap(inner, "`");
+                sb.Append(CodeSpan(inner));
             }
-            else if (!code)
+            else if (code)
+            {
+                sb.Append(inner);
+            }
+            else
             {
                 inner = Wrap(inner, style.Strike || tag is "s" or "del" or "strike" ? "~~" : "");
-                inner = Wrap(inner, style.Italic || tag is "i" or "em" ? "*" : "");
-                inner = Wrap(inner, style.Bold || tag is "b" or "strong" ? "**" : "");
+                inner = Wrap(inner, (style.Italic || tag is "i" or "em") && !ignore.Italic ? "*" : "");
+                sb.Append(Wrap(inner, (style.Bold || tag is "b" or "strong") && !ignore.Bold ? "**" : ""));
             }
-
-            sb.Append(inner);
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// True when every non-blank text node sits inside formatting that <paramref name="has"/> matches.
+    /// </summary>
+    private static bool AllTextHas(IElement body, Func<(bool Bold, bool Italic, bool Strike, bool Code), string, bool> has)
+    {
+        var texts = body.GetDescendants().OfType<IText>().Where(t => t.Data.Trim().Length > 0).ToList();
+        return texts.Count > 0 && texts.All(t =>
+        {
+            for (var e = t.ParentElement; e is not null && e != body; e = e.ParentElement)
+            {
+                if (has(StyleOf(e.GetAttribute("style") ?? ""), e.LocalName))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        });
     }
 
     /// <summary>
@@ -374,8 +390,30 @@ public static partial class PageMarkdown
         return $"{lead}{marker}{core}{marker}{trail}";
     }
 
-    private static string Unwrap(string text, string marker) =>
-        text.Length > marker.Length * 2 && text.StartsWith(marker) && text.EndsWith(marker) ? text[marker.Length..^marker.Length] : text;
+    /// <summary>
+    /// Inline code, with a longer fence when the code holds backticks.
+    /// </summary>
+    private static string CodeSpan(string code)
+    {
+        var core = code.Trim();
+        if (core.Length == 0)
+        {
+            return code;
+        }
+
+        var fence = new string('`', Backticks().Matches(core).Select(m => m.Length).DefaultIfEmpty(0).Max() + 1);
+        var pad = core.StartsWith('`') || core.EndsWith('`') ? " " : "";
+        return Wrap(code, "").Replace(core, $"{fence}{pad}{core}{pad}{fence}");
+    }
+
+    /// <summary>
+    /// A link destination Markdown reads as one: angle brackets around one with spaces or parentheses.
+    /// </summary>
+    private static string LinkDestination(string href)
+    {
+        href = href.Replace("<", "%3C").Replace(">", "%3E");
+        return href.IndexOfAny([' ', '(', ')']) >= 0 ? $"<{href}>" : href;
+    }
 
     private static (bool Bold, bool Italic, bool Strike, bool Code) StyleOf(string css)
     {
@@ -384,24 +422,27 @@ public static partial class PageMarkdown
     }
 
     /// <summary>
-    /// Escapes characters that would read as Markdown formatting: <c>\ * `</c> everywhere, <c>_</c> at word edges.
+    /// Escapes characters that would read as inline Markdown.
     /// </summary>
-    private static string EscapeInline(string text) => InlineSpecial().Replace(text, @"\$0");
+    private static string Escape(string text) => InlineSpecial().Replace(text, @"\$0");
 
     /// <summary>
-    /// Escapes a line start that would read as a heading, list, or quote.
+    /// Escapes a line start that would read as a heading, list, quote, or rule.
     /// </summary>
     private static string EscapeLineStart(string text)
     {
-        var m = NumberedLineStart().Match(text);
-        if (m.Success)
+        if (NumberedLineStart().Match(text) is { Success: true } m)
         {
             return $"{m.Groups[1].Value}\\{text[m.Groups[1].Length..]}";
         }
 
-        return text.Length > 0 && "#->+".Contains(text[0]) && (text.Length == 1 || text[1] == ' ' || text[0] == '#')
-            ? "\\" + text
-            : text;
+        if (text.Length == 0)
+        {
+            return text;
+        }
+
+        var bullet = text[0] is '-' or '+' && (text.Length == 1 || char.IsWhiteSpace(text[1]));
+        return text[0] is '#' or '>' || bullet || DashRule().IsMatch(text) ? "\\" + text : text;
     }
 
     private static double? ToDouble(XAttribute? a) =>
@@ -413,14 +454,27 @@ public static partial class PageMarkdown
     [GeneratedRegex(@"\s+")]
     private static partial Regex Whitespace();
 
-    [GeneratedRegex("font-family:[^;]*(consolas|courier|mono)")]
+    [GeneratedRegex("`+")]
+    private static partial Regex Backticks();
+
+    // Spaces are already removed from the CSS
+    [GeneratedRegex("font-family:[^;]*(consolas|courier|lucidaconsole|cascadia|menlo|monaco|sourcecode|firacode|firamono|jetbrainsmono|dejavusansmono|monospace)")]
     private static partial Regex Monospace();
 
-    [GeneratedRegex(@"[\\*`]|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])")]
+    // \ * ` always; ] before ( or [ (a link); _ at word edges; < before a tag; ~ in pairs.
+    // A lone [x] stays: this output has no link definitions, so it can't become a link.
+    [GeneratedRegex(@"[\\*`]|\](?=[(\[])|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])|<(?=[A-Za-z/!?])|~(?=~)|(?<=~)~")]
     private static partial Regex InlineSpecial();
 
     [GeneratedRegex(@"^(\d+)[.)](\s|$)")]
     private static partial Regex NumberedLineStart();
+
+    [GeneratedRegex(@"^-[ \t]*-[ \t]*-[- \t]*$")]
+    private static partial Regex DashRule();
+
+    // Our ― rule, or an underscore line like Outlook's (escaped by now)
+    [GeneratedRegex(@"^(―|\\_){3,}$")]
+    private static partial Regex HorizontalRule();
 
     [GeneratedRegex(@"^\d+\.$")]
     private static partial Regex NumberMarker();

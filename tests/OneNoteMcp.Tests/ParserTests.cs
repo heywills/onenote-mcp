@@ -100,12 +100,22 @@ public class ParserTests
     }
 
     [Fact]
-    public void ConvertsPageTextAndSkipsRepeatedTitle()
+    public void ConvertsPageText()
     {
-        var (md, _) = PageMarkdown.Convert(PageXml.Replace("This is paragraph one.", "Test Page]]></one:T></one:OE><one:OE><one:T><![CDATA[This is paragraph one."));
+        var (md, _) = PageMarkdown.Convert(PageXml);
 
         Assert.StartsWith("# Test Page\n\nThis is paragraph one.\n\nThis is paragraph two with **bold** text & more.", md);
         Assert.Contains("Text after image.", md);
+    }
+
+    [Fact]
+    public void SkipsFirstLineOnlyWhenOneNoteNamedThePageFromIt()
+    {
+        var bodyStartsWithTitle = PageXml.Replace("This is paragraph one.", "Test Page]]></one:T></one:OE><one:OE><one:T><![CDATA[This is paragraph one.");
+        var noTitleElement = System.Text.RegularExpressions.Regex.Replace(bodyStartsWithTitle, "<one:Title>.*?</one:Title>", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        Assert.StartsWith("# Test Page\n\nThis is paragraph one.", PageMarkdown.Convert(noTitleElement).Markdown);
+        Assert.StartsWith("# Test Page\n\nTest Page\n\nThis is paragraph one.", PageMarkdown.Convert(bodyStartsWithTitle).Markdown);
     }
 
     [Fact]

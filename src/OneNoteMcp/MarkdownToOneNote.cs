@@ -1,4 +1,6 @@
 using Markdig;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
 
 namespace OneNoteMcp;
 
@@ -7,25 +9,28 @@ namespace OneNoteMcp;
 /// </summary>
 public static class MarkdownToOneNote
 {
+    // Strikethrough only: the other extras make ~, ^, ++, and == into formatting.
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UsePipeTables()
-        .UseEmphasisExtras()
+        .UseEmphasisExtras(Markdig.Extensions.EmphasisExtras.EmphasisExtraOptions.Strikethrough)
         .Build();
 
     public static string ToHtml(string markdown) => Markdown.ToHtml(markdown, Pipeline);
 
     /// <summary>
-    /// Splits a leading <c># Title</c> line off the Markdown. Returns a null title when there isn't one.
+    /// Splits a leading level-1 heading (<c># Title</c> or setext) off the Markdown. Returns a null title when there isn't one.
     /// </summary>
     public static (string? Title, string Body) SplitTitle(string markdown)
     {
-        var lines = markdown.Replace("\r\n", "\n").Split('\n');
-        var first = Array.FindIndex(lines, l => l.Trim().Length > 0);
-        if (first < 0 || !lines[first].StartsWith("# "))
+        markdown = markdown.TrimStart('﻿');
+        if (Markdown.Parse(markdown, Pipeline).FirstOrDefault() is not HeadingBlock { Level: 1, Inline: { } inline } heading)
         {
             return (null, markdown);
         }
 
-        return (lines[first][2..].Trim(), string.Join("\n", lines.Skip(first + 1)));
+        var title = string.Concat(inline.Descendants<LiteralInline>().Select(l => l.Content.ToString())).Trim();
+        // The body starts on the line after the heading. The span can stop before a closing "#".
+        var lineEnd = markdown.IndexOf('\n', heading.Span.End);
+        return (title, lineEnd < 0 ? "" : markdown[(lineEnd + 1)..]);
     }
 }

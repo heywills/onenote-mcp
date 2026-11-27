@@ -17,20 +17,23 @@ namespace OneNoteMcp;
 /// - <c>h1</c>-<c>h6</c>: OE with a heading QuickStyleDef, and a blank OE before it
 /// - <c>ul</c>, <c>ol</c>, <c>li</c>: OE with <c>one:List</c>, nested lists in OEChildren
 /// - <c>table</c>: <c>one:Table</c>
-/// - <c>pre</c>: one monospace OE per line
+/// - <c>pre</c>: one OE per line, in OneNote's Code style
+/// - <c>blockquote</c>: paragraphs and lists in OneNote's Quote style. Headings, tables, and code inside a quote lose the quote.
 /// </remarks>
 public static partial class HtmlToOneNote
 {
-    // OneNote's built-in styles: (font size, color, italic)
-    private static readonly Dictionary<string, (string Size, string Color, bool Italic)> Styles = new()
+    // OneNote's built-in styles: (font, size, color, italic)
+    private static readonly Dictionary<string, (string Font, string Size, string Color, bool Italic)> Styles = new()
     {
-        ["h1"] = ("16.0", "#1E4E79", false),
-        ["h2"] = ("14.0", "#2E75B5", false),
-        ["h3"] = ("12.0", "#5B9BD5", false),
-        ["h4"] = ("12.0", "#5B9BD5", true),
-        ["h5"] = ("11.0", "#2E75B5", false),
-        ["h6"] = ("11.0", "#2E75B5", true),
-        ["blockquote"] = ("11.0", "#595959", true),
+        ["h1"] = ("Calibri", "16.0", "#1E4E79", false),
+        ["h2"] = ("Calibri", "14.0", "#2E75B5", false),
+        ["h3"] = ("Calibri", "12.0", "#5B9BD5", false),
+        ["h4"] = ("Calibri", "12.0", "#5B9BD5", true),
+        ["h5"] = ("Calibri", "11.0", "#2E75B5", false),
+        ["h6"] = ("Calibri", "11.0", "#2E75B5", true),
+        // Not italic like OneNote's own Quote style: OneNote copies style italic onto the text, which hides italic words.
+        ["blockquote"] = ("Calibri", "11.0", "#595959", false),
+        ["code"] = ("Consolas", "10.0", "automatic", false),
     };
 
     private static readonly HashSet<string> Inline =
@@ -58,11 +61,11 @@ public static partial class HtmlToOneNote
         // QuickStyleDefs must sit together, before the content.
         var newDefs = builder.NewStyles.Select(style =>
         {
-            var (size, color, italic) = Styles[style.Name];
+            var (font, size, color, italic) = Styles[style.Name];
             var def = new XElement(One + "QuickStyleDef",
                 new XAttribute("index", style.Index), new XAttribute("name", style.Name),
                 new XAttribute("fontColor", color), new XAttribute("highlightColor", "automatic"),
-                new XAttribute("font", "Calibri"), new XAttribute("fontSize", size),
+                new XAttribute("font", font), new XAttribute("fontSize", size),
                 new XAttribute("spaceBefore", "0.0"), new XAttribute("spaceAfter", "0.0"));
             if (italic)
             {
@@ -212,6 +215,12 @@ public static partial class HtmlToOneNote
                         Oe(parent, InlineHtml(e.ChildNodes), style: StyleIndex(e.LocalName));
                         break;
                     case "blockquote":
+                        if (!_inQuote && parent.Elements(One + "OE").LastOrDefault() is { } previous
+                            && (string?)previous.Attribute("quickStyleIndex") == StyleIndex("blockquote").ToString())
+                        {
+                            Oe(parent, ""); // keeps back-to-back quotes apart
+                        }
+
                         var outerQuote = _inQuote;
                         _inQuote = true;
                         Blocks(e.ChildNodes, parent);
@@ -224,10 +233,16 @@ public static partial class HtmlToOneNote
                         Table(e, parent);
                         break;
                     case "pre":
+                        var code = StyleIndex("code");
+                        if (parent.Elements(One + "OE").LastOrDefault() is { } last && (string?)last.Attribute("quickStyleIndex") == code.ToString())
+                        {
+                            Oe(parent, ""); // keeps back-to-back code blocks apart
+                        }
+
                         foreach (var line in e.TextContent.Trim('\n').Split('\n'))
                         {
                             var escaped = WebUtility.HtmlEncode(line.TrimEnd('\r')).Replace(" ", "&nbsp;");
-                            Oe(parent, $"<span style='font-family:Consolas'>{(escaped.Length > 0 ? escaped : "&nbsp;")}</span>");
+                            Oe(parent, escaped.Length > 0 ? escaped : "&nbsp;", style: code);
                         }
 
                         break;
@@ -259,7 +274,7 @@ public static partial class HtmlToOneNote
                     nested.RemoveAt(0);
                 }
 
-                var oe = Oe(parent, InlineHtml(inline), listKind: list.LocalName, number: (number++, sequence));
+                var oe = Oe(parent, InlineHtml(inline), style: _inQuote ? StyleIndex("blockquote") : null, listKind: list.LocalName, number: (number++, sequence));
                 if (nested.Count > 0)
                 {
                     var children = new XElement(One + "OEChildren");

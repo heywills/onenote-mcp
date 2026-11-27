@@ -47,6 +47,8 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
   - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
   - Numbered lists start at 1. OneNote numbers lists itself.
   - Images become links. Code blocks lose their language.
+  - Headings, tables, and code inside a quote lose the quote.
+  - Bold that covers a whole table header cell is dropped, since the header row is already bold.
 
 ## Tests
 
