@@ -22,7 +22,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     private const string ImagesDescription = """
 
         Local PNG, JPEG, GIF, BMP, and TIFF images are embedded. From inputPath: only images inside its folder, by relative path. Inline content: absolute paths.
-        Web URLs, network shares and drives, symbolic links, files over 50 MB, images past 50 MB per page, and missing or other files stay links. The result counts both.
+        Web URLs, network shares and drives, unsafe symbolic links, files over 50 MB, images that would push the page past 50 MB, images inside links or formatting, and missing or other files stay links. The result counts both.
         """;
 
     private const string InlineDescription = "Return the content in the response instead of saving a file. Don't pass outputPath with it.";
@@ -395,7 +395,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
             titleText?.ReplaceNodes(new XCData(System.Net.WebUtility.HtmlEncode(title)));
             if (!string.IsNullOrWhiteSpace(contentHtml))
             {
-                images = HtmlToOneNote.AddToPage(page, contentHtml, fromMarkdown, src => PageFiles.ReadImage(src, imageFolder));
+                images = HtmlToOneNote.AddToPage(page, contentHtml, fromMarkdown, (src, maxBytes) => PageFiles.ReadImage(src, imageFolder, maxBytes));
             }
 
             oneNote.UpdatePageContent(page.ToString(SaveOptions.DisableFormatting));

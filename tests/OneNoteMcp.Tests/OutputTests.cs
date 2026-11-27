@@ -188,6 +188,35 @@ public class OutputTests
         }
     }
 
+    // Like a junctioned C:\_git: the input file was read through the same link
+    [Fact]
+    public void FollowsALocalJunctionAboveTheFolder()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+        var real = Path.Combine(folder, "real");
+        var link = Path.Combine(folder, "link");
+        PageFiles.Write(Path.Combine(real, "page", "a.png"), [1]);
+        Junction(link, real);
+        try
+        {
+            Assert.Equal([1], PageFiles.ReadImage("a.png", Path.Combine(link, "page")));
+            Assert.Equal([1], PageFiles.ReadImage(Path.Combine(link, "page", "a.png"), null));
+        }
+        finally
+        {
+            Directory.Delete(link);
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void Junction(string link, string target)
+    {
+        // A junction needs no admin rights, unlike a symbolic link
+        using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"") { CreateNoWindow = true, UseShellExecute = false })!;
+        mklink.WaitForExit();
+        Assert.True(Directory.Exists(link));
+    }
+
     [Fact]
     public void SkipsImagesThroughAJunction()
     {
@@ -196,16 +225,9 @@ public class OutputTests
         var page = Path.Combine(folder, "page");
         PageFiles.Write(Path.Combine(outside, "a.png"), [1]);
         Directory.CreateDirectory(page);
-
-        // A junction needs no admin rights, unlike a symbolic link
-        using (var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{Path.Combine(page, "link")}\" \"{outside}\"") { CreateNoWindow = true, UseShellExecute = false })!)
-        {
-            mklink.WaitForExit();
-        }
-
+        Junction(Path.Combine(page, "link"), outside);
         try
         {
-            Assert.True(Directory.Exists(Path.Combine(page, "link")));
             Assert.Null(PageFiles.ReadImage("link/a.png", page));
         }
         finally

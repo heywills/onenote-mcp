@@ -50,9 +50,9 @@ public static partial class HtmlToOneNote
     /// Appends <paramref name="html"/> to a page as an Outline, and adds the styles it needs.
     /// </summary>
     /// <param name="fromMarkdown">The HTML came from Markdown, whose table code keeps <c>\|</c> for a pipe</param>
-    /// <param name="loadImage">Returns an image's bytes from its <c>src</c>, or null to keep it a link</param>
+    /// <param name="loadImage">Returns an image's bytes from its <c>src</c>, up to a size, or null to keep it a link</param>
     /// <returns>How many images were embedded, and how many stayed links</returns>
-    public static (int Embedded, int Linked) AddToPage(XElement page, string html, bool fromMarkdown = false, Func<string, byte[]?>? loadImage = null)
+    public static (int Embedded, int Linked) AddToPage(XElement page, string html, bool fromMarkdown = false, Func<string, long, byte[]?>? loadImage = null)
     {
         // Parsed as body content even for a whole document: the parser ignores stray html, head, and body tags
         var body = new HtmlParser().ParseDocument($"<body>{html}</body>").Body!;
@@ -178,8 +178,8 @@ public static partial class HtmlToOneNote
     /// <param name="indexes">The page's QuickStyleDef indexes by name</param>
     /// <param name="nextIndex">The first free QuickStyleDef index</param>
     /// <param name="fromMarkdown">Turn <c>\|</c> in table code back into a pipe</param>
-    /// <param name="loadImage">Returns an image's bytes from its <c>src</c>, or null to keep it a link</param>
-    private sealed class Builder(Dictionary<string, int> indexes, int nextIndex, bool fromMarkdown, Func<string, byte[]?>? loadImage)
+    /// <param name="loadImage">Returns an image's bytes from its <c>src</c>, up to a size, or null to keep it a link</param>
+    private sealed class Builder(Dictionary<string, int> indexes, int nextIndex, bool fromMarkdown, Func<string, long, byte[]?>? loadImage)
     {
         public int Embedded { get; private set; }
 
@@ -242,8 +242,16 @@ public static partial class HtmlToOneNote
         /// </remarks>
         private XElement? EmbeddedImage(INode n)
         {
-            if (n is not IElement { LocalName: "img" } img || loadImage?.Invoke(img.GetAttribute("src") ?? "") is not { } data
-                || Images.ForOneNote(data) is not { } image || _embeddedBytes + image.Data.Length > MaxPageImageBytes)
+            if (n is not IElement { LocalName: "img" } img)
+            {
+                return null;
+            }
+
+            // Don't read a file that can't fit: a large one shrinks to MaxEmbedKb, so it fits only when that much is left
+            var remaining = MaxPageImageBytes - _embeddedBytes;
+            var readLimit = remaining >= Images.MaxEmbedKb * 1024L ? long.MaxValue : remaining;
+            if (remaining <= 0 || loadImage?.Invoke(img.GetAttribute("src") ?? "", readLimit) is not { } data
+                || Images.ForOneNote(data) is not { } image || image.Data.Length > remaining)
             {
                 return null;
             }
@@ -403,6 +411,7 @@ public static partial class HtmlToOneNote
             }
         }
 
+        /// <summary>Emits one list item, with its images and nested blocks as children.</summary>
         /// <remarks>
         /// - An item that's only an image holds the image in place of text. Other images in the item text go below it.
         /// </remarks>

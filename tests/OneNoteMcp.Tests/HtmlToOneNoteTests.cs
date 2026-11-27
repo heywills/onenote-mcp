@@ -42,7 +42,7 @@ public class HtmlToOneNoteTests
     private static (XElement Page, (int Embedded, int Linked) Images) ConvertWithImages(string html)
     {
         var page = new XElement(One + "Page", new XElement(One + "Title"));
-        var images = HtmlToOneNote.AddToPage(page, html, loadImage: src => src.StartsWith("missing") ? null : Png);
+        var images = HtmlToOneNote.AddToPage(page, html, loadImage: (src, _) => src.StartsWith("missing") ? null : Png);
         return (page, images);
     }
 
@@ -87,7 +87,15 @@ public class HtmlToOneNoteTests
         Png.CopyTo(nineMb, 0);
         var page = new XElement(One + "Page", new XElement(One + "Title"));
         var html = string.Concat(Enumerable.Range(1, 6).Select(i => $"<p><img src=\"{i}.png\"></p>"));
-        Assert.Equal((5, 1), HtmlToOneNote.AddToPage(page, html, loadImage: _ => nineMb));
+        var limits = new List<long>();
+        Assert.Equal((5, 1), HtmlToOneNote.AddToPage(page, html, loadImage: (_, limit) =>
+        {
+            limits.Add(limit);
+            return limit >= nineMb.Length ? nineMb : null;
+        }));
+
+        // With 5 MB left, the last read is capped there: a 9 MB file isn't read at all
+        Assert.Equal(5 * 1024 * 1024, limits[^1]);
     }
 
     [Fact]

@@ -87,22 +87,23 @@ public static partial class PageFiles
     /// <remarks>
     /// - Files can come from the web, so their images must sit inside the file's folder. Only inline content may use absolute paths.
     /// - Network locations are never read, UNC or mapped drive: opening one sends the user's Windows credentials to that host.
-    /// - Neither are paths through a symbolic link or junction, which could point anywhere.
+    /// - Symbolic links and junctions are checked too: see <see cref="HasUnsafeLink"/>.
     /// - These checks run on the final full path, before any call that touches the file.
     /// </remarks>
-    public static byte[]? ReadImage(string src, string? baseFolder)
+    /// <param name="maxBytes">The largest file to read, at most <see cref="MaxImageBytes"/></param>
+    public static byte[]? ReadImage(string src, string? baseFolder, long maxBytes = MaxImageBytes)
     {
         try
         {
             if (ImagePath(src, baseFolder) is not { } candidate || Path.GetFullPath(candidate) is not { } path
-                || !IsLocal(path) || GoesThroughLink(path))
+                || !IsLocal(path) || HasUnsafeLink(path, baseFolder))
             {
                 return null;
             }
 
             Check(path, "image path");
             var file = new FileInfo(path);
-            return file.Exists && file.Length <= MaxImageBytes ? File.ReadAllBytes(path) : null;
+            return file.Exists && file.Length <= Math.Min(maxBytes, MaxImageBytes) ? File.ReadAllBytes(path) : null;
         }
         catch (Exception e) when (e is McpException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or UriFormatException)
         {
@@ -152,21 +153,26 @@ public static partial class PageFiles
         !IsNetworkPath(fullPath) && !IsDevicePath(fullPath) && Path.GetPathRoot(fullPath) is { Length: > 0 } root
         && new DriveInfo(root).DriveType != DriveType.Network;
 
-    /// <summary>Whether the file, or a folder above it, is a symbolic link or junction.</summary>
+    /// <summary>Whether the image's path goes through a symbolic link or junction it shouldn't follow.</summary>
     /// <remarks>
+    /// - Below a file's folder, any link is unsafe: it could lead out of the folder.
+    /// - Elsewhere, such as a junctioned <c>C:\_git</c> above the folder, a link is fine when it points to a local path that isn't another link.
     /// - OneDrive placeholders are reparse points too, but have no link target, so they still load.
     /// </remarks>
-    private static bool GoesThroughLink(string fullPath)
+    private static bool HasUnsafeLink(string fullPath, string? baseFolder)
     {
-        var file = new FileInfo(fullPath);
-        if (file.LinkTarget is not null)
+        var folder = baseFolder is null ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseFolder));
+        for (FileSystemInfo? node = new FileInfo(fullPath); node is not null; node = Parent(node))
         {
-            return true;
-        }
+            if (node.LinkTarget is not { } target)
+            {
+                continue;
+            }
 
-        for (var folder = file.Directory; folder is not null; folder = folder.Parent)
-        {
-            if (folder.LinkTarget is not null)
+            var insideFolder = folder is not null && node.FullName.Length > folder.Length
+                && node.FullName.StartsWith(folder, StringComparison.OrdinalIgnoreCase);
+            var resolved = Path.GetFullPath(target, Path.GetDirectoryName(node.FullName) ?? node.FullName);
+            if (insideFolder || !IsLocal(resolved) || new FileInfo(resolved).LinkTarget is not null || new DirectoryInfo(resolved).LinkTarget is not null)
             {
                 return true;
             }
@@ -174,6 +180,13 @@ public static partial class PageFiles
 
         return false;
     }
+
+    private static DirectoryInfo? Parent(FileSystemInfo node) => node switch
+    {
+        FileInfo file => file.Directory,
+        DirectoryInfo directory => directory.Parent,
+        _ => null,
+    };
 
     /// <summary>Writes UTF-8 without a byte-order mark, creating missing folders.</summary>
     /// <returns>The full path written</returns>
