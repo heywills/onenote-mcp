@@ -56,9 +56,22 @@ class NotebookInfo:
     section_groups: list[SectionGroupInfo] = field(default_factory=list)
 
 
+def _as_notebooks(root):
+    """Wrap a scoped result (root Notebook, Section, or SectionGroup) in Notebooks > Notebook."""
+    tag = _local_tag(root.tag)
+    if tag == "Notebooks":
+        return root
+    wrapper = ET.Element(f"{{{NS['one']}}}Notebooks")
+    if tag == "Notebook":
+        wrapper.append(root)
+    else:
+        ET.SubElement(wrapper, f"{{{NS['one']}}}Notebook").append(root)
+    return wrapper
+
+
 def parse_notebooks(xml_str: str) -> list[NotebookInfo]:
     """Parse hierarchy XML into notebook list."""
-    root = ET.fromstring(xml_str)
+    root = _as_notebooks(ET.fromstring(xml_str))
     notebooks = []
     for nb in root.findall("one:Notebook", NS):
         notebook = NotebookInfo(
@@ -152,33 +165,45 @@ def _process_outline(outline, images_start_index: int = 0) -> tuple[list[str], l
     images = []
     img_counter = images_start_index
 
-    for oe in outline.iter():
-        tag = _local_tag(oe.tag)
+    def add_image(oe):
+        nonlocal img_counter
+        cb_id = _get_callback_id(oe)
+        if cb_id:
+            img_counter += 1
+            ref = _make_image_ref(oe, img_counter)
+            if ref:
+                images.append(ref)
+                lines.append(f"[Image {ref.index}]")
 
-        if tag == "T":
-            # Text element — extract CDATA content
-            text = oe.text or ""
-            text = _clean_text(text)
-            if text.strip():
-                lines.append(text)
+    def walk(parent):
+        for oe in parent:
+            tag = _local_tag(oe.tag)
 
-        elif tag == "Image":
-            cb_id = _get_callback_id(oe)
-            if cb_id:
-                img_counter += 1
-                ref = _make_image_ref(oe, img_counter)
-                if ref:
-                    images.append(ref)
-                    lines.append(f"[Image {ref.index}]")
+            if tag == "T":
+                # Text element — extract CDATA content
+                text = oe.text or ""
+                text = _clean_text(text)
+                if text.strip():
+                    lines.append(text)
 
-        elif tag == "Table":
-            table_lines = _process_table(oe)
-            lines.extend(table_lines)
+            elif tag == "Image":
+                add_image(oe)
 
-        elif tag == "InsertedFile":
-            name = oe.get("preferredName", "file")
-            lines.append(f"[Attached: {name}]")
+            elif tag == "Table":
+                # Don't descend: _process_table already outputs the cell text.
+                # It skips images, so list them after the table.
+                lines.extend(["", *_process_table(oe), ""])
+                for img in oe.iter(f"{{{NS['one']}}}Image"):
+                    add_image(img)
+                continue
 
+            elif tag == "InsertedFile":
+                name = oe.get("preferredName", "file")
+                lines.append(f"[Attached: {name}]")
+
+            walk(oe)
+
+    walk(outline)
     return lines, images, img_counter
 
 
@@ -198,7 +223,7 @@ def _process_table(table_elem) -> list[str]:
             for t in cell.iter():
                 if _local_tag(t.tag) == "T" and t.text:
                     texts.append(_clean_text(t.text).strip())
-            cell_texts.append(" ".join(texts) if texts else "")
+            cell_texts.append(" ".join(" ".join(texts).split()) if texts else "")
         md_rows.append("| " + " | ".join(cell_texts) + " |")
 
     if len(md_rows) >= 1:
@@ -273,7 +298,7 @@ def _clean_text(text: str) -> str:
 
 def parse_search_results(xml_str: str) -> list[dict]:
     """Parse FindPages result XML into a list of matches."""
-    root = ET.fromstring(xml_str)
+    root = _as_notebooks(ET.fromstring(xml_str))
     results = []
 
     for nb in root.findall("one:Notebook", NS):

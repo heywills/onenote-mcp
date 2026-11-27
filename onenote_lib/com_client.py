@@ -168,3 +168,20 @@ $onenote = New-Object -ComObject OneNote.Application
 $onenote.DeleteHierarchy('{safe_id}')
 """
     _run_ps(script)
+
+
+def find_page_by_link_guid(section_id: str, page_guid: str) -> str:
+    """Return the ID of the page in a section whose OneNote link has page-id={page_guid}, or ""."""
+    safe_id = section_id.replace("'", "''")
+    safe_guid = page_guid.replace("'", "''")
+    script = f"""
+$onenote = New-Object -ComObject OneNote.Application
+$xml = ""
+$onenote.GetHierarchy('{safe_id}', {PAGES}, [ref]$xml, 2)
+foreach ($m in [regex]::Matches($xml, '<one:Page ID="([^"]+)"')) {{
+    $link = ""
+    $onenote.GetHyperlinkToObject($m.Groups[1].Value, '', [ref]$link)
+    if ($link.ToLower().Contains('page-id={{{safe_guid.lower()}}}')) {{ $m.Groups[1].Value; break }}
+}}
+"""
+    return _run_ps(script, timeout=120).strip()
