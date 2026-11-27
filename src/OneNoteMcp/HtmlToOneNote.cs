@@ -22,7 +22,7 @@ namespace OneNoteMcp;
 /// </remarks>
 public static partial class HtmlToOneNote
 {
-    // OneNote's built-in styles: (font, size, color, italic)
+    /// <summary>OneNote's built-in styles: (font, size, color, italic)</summary>
     private static readonly Dictionary<string, (string Font, string Size, string Color, bool Italic)> Styles = new()
     {
         ["h1"] = ("Calibri", "16.0", "#1E4E79", false),
@@ -94,7 +94,8 @@ public static partial class HtmlToOneNote
     /// </summary>
     /// <param name="inCode">Keep every space, as <c>&amp;nbsp;</c></param>
     /// <param name="inLink">Inside a link, where an image can only be its alt text</param>
-    private static string InlineHtml(IEnumerable<INode> nodes, bool inCode = false, bool inLink = false)
+    /// <param name="inTable">In a table cell, where code keeps the <c>\|</c> that Markdown needs for a pipe</param>
+    private static string InlineHtml(IEnumerable<INode> nodes, bool inCode = false, bool inLink = false, bool inTable = false)
     {
         var sb = new StringBuilder();
         foreach (var n in nodes)
@@ -102,7 +103,7 @@ public static partial class HtmlToOneNote
             if (n is IText t)
             {
                 sb.Append(inCode
-                    ? CodeHtml(t.Data)
+                    ? CodeHtml(inTable ? t.Data.Replace(@"\|", "|") : t.Data)
                     : WebUtility.HtmlEncode(Whitespace().Replace(t.Data, " ")));
                 continue;
             }
@@ -112,7 +113,7 @@ public static partial class HtmlToOneNote
                 continue;
             }
 
-            var inner = InlineHtml(e.ChildNodes, inCode || e.LocalName == "code", inLink || e.LocalName == "a");
+            var inner = InlineHtml(e.ChildNodes, inCode || e.LocalName == "code", inLink || e.LocalName == "a", inTable);
             var alt = e.GetAttribute("alt") is { Length: > 0 } a ? a : e.GetAttribute("src") ?? "image";
             sb.Append(e.LocalName switch
             {
@@ -159,11 +160,14 @@ public static partial class HtmlToOneNote
     private sealed class Builder(Dictionary<string, int> indexes, int nextIndex)
     {
         private bool _inQuote;
-        private int _listDepth;
+        private bool _inTable;
 
-        /// <summary>Per list depth: whether the next numbered list uses <c>##)</c>.</summary>
-        /// <remarks>OneNote continues numbering across lists with the same format, even with paragraphs between them. Alternating formats restarts each list at 1.</remarks>
-        private readonly Dictionary<int, bool> _altNumberFormat = [];
+        /// <summary>Per parent OEChildren: whether its next numbered list uses <c>##)</c>.</summary>
+        /// <remarks>
+        /// - OneNote continues numbering across sibling lists with the same format, even with paragraphs between them. Alternating formats restarts each list at 1.
+        /// - Lists under different parents restart on their own.
+        /// </remarks>
+        private readonly Dictionary<XElement, bool> _altNumberFormat = [];
 
         /// <summary>Styles this content needs that the page doesn't have yet</summary>
         public List<(string Name, int Index)> NewStyles { get; } = [];
@@ -210,7 +214,7 @@ public static partial class HtmlToOneNote
 
             void Flush()
             {
-                var text = InlineHtml(run).Trim();
+                var text = InlineHtml(run, inTable: _inTable).Trim();
                 if (text.Length > 0)
                 {
                     Oe(parent, text, style: _inQuote ? StyleIndex("blockquote") : null);
@@ -272,9 +276,10 @@ public static partial class HtmlToOneNote
                     case "table":
                         // Tables can't hold the quote style
                         var tableInQuote = _inQuote;
-                        _inQuote = false;
+                        var outerTable = _inTable;
+                        (_inQuote, _inTable) = (false, true);
                         Table(e, parent);
-                        _inQuote = tableInQuote;
+                        (_inQuote, _inTable) = (tableInQuote, outerTable);
                         break;
                     case "pre":
                         var code = StyleIndex("code");
@@ -310,12 +315,11 @@ public static partial class HtmlToOneNote
             var format = "##.";
             if (list.LocalName == "ol")
             {
-                var alt = _altNumberFormat.GetValueOrDefault(_listDepth);
-                _altNumberFormat[_listDepth] = !alt;
+                var alt = _altNumberFormat.GetValueOrDefault(parent);
+                _altNumberFormat[parent] = !alt;
                 format = alt ? "##)" : "##.";
             }
 
-            _listDepth++;
             foreach (var li in list.Children.Where(c => c.LocalName == "li"))
             {
                 var inline = li.ChildNodes.Where(IsInline).ToList();
@@ -339,8 +343,6 @@ public static partial class HtmlToOneNote
                     }
                 }
             }
-
-            _listDepth--;
         }
 
         private void Table(IElement table, XElement parent)
@@ -368,7 +370,7 @@ public static partial class HtmlToOneNote
                     {
                         if (row[i].LocalName == "th")
                         {
-                            Oe(cellChildren, $"<b>{InlineHtml(row[i].ChildNodes).Trim()}</b>");
+                            Oe(cellChildren, $"<b>{InlineHtml(row[i].ChildNodes, inTable: true).Trim()}</b>");
                         }
                         else
                         {

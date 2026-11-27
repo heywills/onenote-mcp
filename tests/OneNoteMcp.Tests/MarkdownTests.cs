@@ -279,6 +279,41 @@ public class MarkdownTests
     public void LooksPastEmptyElementsForTheNextCharacter() =>
         Assert.Equal("# P\n\n<strong>foo.</strong>bar", Read("<one:OE><one:T><![CDATA[<span style='font-weight:bold'>foo.</span><span></span>bar]]></one:T></one:OE>"));
 
+    [Theory]
+    [InlineData("| H |\n| --- |\n| `a\\|b` and c\\|d |")]
+    [InlineData("**`x`** and `a`**`b`**")]
+    public void RoundTripsPipesAndFormattingInCode(string markdown) =>
+        Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(RoundTrip(markdown)["# Sample\n\n".Length..]));
+
+    [Fact]
+    public void ReadsBoldCodeAndMergesCodeRuns()
+    {
+        Assert.Equal("# P\n\n**`x`**", Read("<one:OE><one:T><![CDATA[<span style='font-family:Consolas;font-weight:bold'>x</span>]]></one:T></one:OE>"));
+        Assert.Equal("# P\n\n`ab`", Read("<one:OE><one:T><![CDATA[<span style='font-family:Consolas'>a</span><span style='font-family:Consolas;font-weight:bold'>b</span>]]></one:T></one:OE>"));
+    }
+
+    [Fact]
+    public void NestedListsUnderDifferentItemsKeepTheFirstFormat()
+    {
+        var page = new XElement(XName.Get("Page", Ns));
+        HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml("1. a\n   1. x\n2. b\n   1. y"));
+
+        Assert.Equal(["##.", "##.", "##.", "##."], page.Descendants(XName.Get("Number", Ns)).Select(n => (string?)n.Attribute("numberFormat")));
+    }
+
+    [Fact]
+    public void FindsTheTitleAfterACommentAndKeepsTheComment()
+    {
+        var (title, body) = MarkdownToOneNote.SplitTitle("<!-- c -->\n# Title\n\nBody");
+
+        Assert.Equal("Title", title);
+        Assert.Equal("<!-- c -->\n\nBody", body);
+    }
+
+    [Fact]
+    public void ReadsAPageWithADuplicateStyleIndex() =>
+        Assert.Equal("# P\n\nx", PageMarkdown.Convert($"""<one:Page xmlns:one="{Ns}" name="P"><one:Title/><one:QuickStyleDef index="1" name="p"/><one:QuickStyleDef index="1" name="h1"/><one:Outline><one:OEChildren><one:OE quickStyleIndex="1"><one:T>x</one:T></one:OE></one:OEChildren></one:Outline></one:Page>""").Markdown);
+
     [Fact]
     public void RestoresBackslashesOnlyInFileLinks()
     {

@@ -27,9 +27,10 @@ public static partial class PageMarkdown
     {
         var root = XElement.Parse(xml);
         var title = (string?)root.Attribute("name") ?? (string?)root.Attribute("ID") ?? "Untitled";
-        var styles = root.Elements(One + "QuickStyleDef").ToDictionary(
-            q => (string?)q.Attribute("index") ?? "",
-            q => (Name: (string?)q.Attribute("name") ?? "", Italic: (string?)q.Attribute("italic") == "true"));
+        // The first def wins when an index repeats
+        var styles = root.Elements(One + "QuickStyleDef").GroupBy(q => (string?)q.Attribute("index") ?? "").ToDictionary(
+            g => g.Key,
+            g => (Name: (string?)g.First().Attribute("name") ?? "", Italic: (string?)g.First().Attribute("italic") == "true"));
 
         // Without a Title element, OneNote names the page after its first line, so that line repeats the name.
         var repeatedTitle = root.Element(One + "Title") is null
@@ -463,8 +464,10 @@ public static partial class PageMarkdown
             // Neighbors with the same formatting wrap once: **foobar**, not **foo****bar**.
             // OneNote splits runs where only the color or font changes, so compare formatting, not the whole style.
             var run = new List<IElement> { e };
+            // Code runs always merge, or `a``b` would read as one span holding a double backtick.
             while (e.LocalName is not ("a" or "br" or "img") && i + 1 < list.Count && list[i + 1] is IElement next
-                && next.LocalName is not ("a" or "br" or "img") && Formatting(next) == Formatting(e))
+                && next.LocalName is not ("a" or "br" or "img")
+                && (Formatting(next) == Formatting(e) || Formatting(next).Code && Formatting(e).Code && !inCode))
             {
                 run.Add(next);
                 i++;
@@ -502,7 +505,10 @@ public static partial class PageMarkdown
             }
             else if (code && !inCode)
             {
-                sb.Append(CodeSpan(inner));
+                // Merged code runs keep formatting they all share: **`x`**
+                var formats = run.Select(Formatting).ToList();
+                sb.Append(Emphasize(CodeSpan(inner), formats.All(f => f.Strike) && !ignore.Strike,
+                    formats.All(f => f.Italic) && !ignore.Italic, formats.All(f => f.Bold) && !ignore.Bold, before, after));
             }
             else if (code)
             {
@@ -510,23 +516,29 @@ public static partial class PageMarkdown
             }
             else
             {
-                if (!MarkersCanWrap(inner, before, after))
-                {
-                    // "func**(x)**" shows the asterisks: Markdown emphasis can't open between a letter and punctuation.
-                    inner = WrapHtml(inner, strike ? "del" : "");
-                    inner = WrapHtml(inner, italic ? "em" : "");
-                    sb.Append(WrapHtml(inner, bold ? "strong" : ""));
-                }
-                else
-                {
-                    inner = Wrap(inner, strike ? "~~" : "");
-                    inner = Wrap(inner, italic ? "*" : "");
-                    sb.Append(Wrap(inner, bold ? "**" : ""));
-                }
+                sb.Append(Emphasize(inner, strike, italic, bold, before, after));
             }
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Wraps text in strikethrough, italic, and bold.
+    /// </summary>
+    /// <remarks>"func**(x)**" shows the asterisks: Markdown emphasis can't open between a letter and punctuation, so those cases use HTML.</remarks>
+    private static string Emphasize(string text, bool strike, bool italic, bool bold, char before, char after)
+    {
+        if (!MarkersCanWrap(text, before, after))
+        {
+            text = WrapHtml(text, strike ? "del" : "");
+            text = WrapHtml(text, italic ? "em" : "");
+            return WrapHtml(text, bold ? "strong" : "");
+        }
+
+        text = Wrap(text, strike ? "~~" : "");
+        text = Wrap(text, italic ? "*" : "");
+        return Wrap(text, bold ? "**" : "");
     }
 
     /// <summary>
@@ -699,16 +711,19 @@ public static partial class PageMarkdown
     [GeneratedRegex("`+")]
     private static partial Regex Backticks();
 
-    // Spaces are already removed from the CSS
+    /// <summary>A monospace font-family. Spaces are already removed from the CSS.</summary>
     [GeneratedRegex("font-family:[^;]*(consolas|courier|lucidaconsole|cascadia|menlo|monaco|sourcecode|firacode|firamono|jetbrainsmono|dejavusansmono|monospace)")]
     private static partial Regex Monospace();
 
-    // \ * ` always; ] before ( [ or : (a link or link definition); _ at word edges; < before a tag; ~ in pairs; & before an entity.
-    // A lone [x] stays: this output has no link definitions, so it can't become a link.
+    /// <summary>Characters that would read as inline Markdown.</summary>
+    /// <remarks>
+    /// - <c>\ * `</c> always; <c>]</c> before <c>( [ :</c> (a link or link definition); <c>_</c> at word edges; <c>&lt;</c> before a tag; <c>~</c> in pairs; <c>&amp;</c> before an entity
+    /// - A lone <c>[x]</c> stays: this output has no link definitions, so it can't become a link.
+    /// </remarks>
     [GeneratedRegex(@"[\\*`]|\](?=[(\[:])|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])|<(?=[A-Za-z/!?])|~(?=~)|(?<=~)~|&(?=#?\w+;)")]
     private static partial Regex InlineSpecial();
 
-    // Escape() plus every bracket, which would end link text early
+    /// <summary><see cref="InlineSpecial"/> plus every bracket, which would end link text early.</summary>
     [GeneratedRegex(@"[\\*`\[\]]|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])|<(?=[A-Za-z/!?])|~(?=~)|(?<=~)~|&(?=#?\w+;)")]
     private static partial Regex LinkTextSpecial();
 
@@ -721,15 +736,15 @@ public static partial class PageMarkdown
     [GeneratedRegex(@"^-[ \t]*-[ \t]*-[- \t]*$")]
     private static partial Regex DashRule();
 
-    // Our ― rule, or an underscore line like Outlook's (escaped by now)
+    /// <summary>Our ― rule, or an underscore line like Outlook's (escaped by now).</summary>
     [GeneratedRegex(@"^(―|\\_){3,}$")]
     private static partial Regex HorizontalRule();
 
-    // A URL a CommonMark autolink can hold: a scheme, and no spaces, angle brackets, or backslashes
+    /// <summary>A URL a CommonMark autolink can hold: a scheme, and no spaces, angle brackets, or backslashes.</summary>
     [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>\\]*$")]
     private static partial Regex AutolinkUrl();
 
-    // OneNote's number text: 1. or 1)
+    /// <summary>OneNote's number text: <c>1.</c> or <c>1)</c></summary>
     [GeneratedRegex(@"^(\d+)[.)]$")]
     private static partial Regex NumberMarker();
 }
