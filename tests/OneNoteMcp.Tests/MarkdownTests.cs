@@ -82,6 +82,11 @@ public class MarkdownTests
     [InlineData(@"\~\~not struck\~\~ and see [1\](x) and \<b>tag")]
     [InlineData("x^2^ and ~sub~ and ==mark== and ++ins++")]
     [InlineData("a\n\n---\n\nb")]
+    [InlineData("- item\n\n  > quote in the item\n\n- next")]
+    [InlineData("````\n```\nx\n```\n````\n\nafter")]
+    [InlineData(@"[1\]: https://example.com")]
+    [InlineData(@"## Ticket \#")]
+    [InlineData("#### Four\n\n###### Six")]
     public void RoundTripsEdgeCases(string markdown) =>
         Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
 
@@ -92,6 +97,69 @@ public class MarkdownTests
         HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml("1. A\n2. B\n\nText\n\n1. C"));
 
         Assert.Equal(["0", "0", "1"], page.Descendants(XName.Get("Number", Ns)).Select(n => (string?)n.Attribute("numberSequence")));
+    }
+
+    private static string Read(string body, string pageName = "P", bool hasTitle = true) =>
+        PageMarkdown.Convert($"""<one:Page xmlns:one="{Ns}" name="{pageName}">{(hasTitle ? "<one:Title/>" : "")}<one:Outline><one:OEChildren>{body}</one:OEChildren></one:Outline></one:Page>""").Markdown;
+
+    [Fact]
+    public void JoinsTextRunsOfOneParagraph()
+    {
+        const string bullet = "<one:List><one:Bullet bullet=\"2\"/></one:List>";
+        Assert.Equal("# P\n\n- Hello world", Read($"<one:OE>{bullet}<one:T><![CDATA[Hello ]]></one:T><one:T selected=\"all\"><![CDATA[]]></one:T><one:T><![CDATA[world]]></one:T></one:OE>"));
+        Assert.Equal("# P\n\nPlain **bold**", Read("<one:OE><one:T><![CDATA[Plain ]]></one:T><one:T style=\"font-weight:bold\"><![CDATA[bold]]></one:T></one:OE>"));
+    }
+
+    [Fact]
+    public void KeepsChildrenOfTheRepeatedTitleLine() =>
+        Assert.Equal("# Meeting\n\n- child bullet", Read(
+            "<one:OE><one:T><![CDATA[Meeting]]></one:T><one:OEChildren><one:OE><one:List><one:Bullet bullet=\"2\"/></one:List><one:T><![CDATA[child bullet]]></one:T></one:OE></one:OEChildren></one:OE>",
+            "Meeting", hasTitle: false));
+
+    // The way OneNote stores h4 and h6: the style's italic copied onto the text, as spans or OE style
+    [Fact]
+    public void DropsStyleItalicFromH4AndH6()
+    {
+        var xml = $"""
+            <one:Page xmlns:one="{Ns}" name="P"><one:Title/>
+              <one:QuickStyleDef index="4" name="h4"/><one:QuickStyleDef index="6" name="h6"/>
+              <one:Outline><one:OEChildren>
+                <one:OE quickStyleIndex="4"><one:T><![CDATA[<span style='font-style:italic'>Four</span>]]></one:T></one:OE>
+                <one:OE quickStyleIndex="6" style="font-style:italic"><one:T><![CDATA[Six]]></one:T></one:OE>
+              </one:OEChildren></one:Outline>
+            </one:Page>
+            """;
+
+        Assert.Equal("# P\n\n#### Four\n\n###### Six", PageMarkdown.Convert(xml).Markdown);
+    }
+
+    [Fact]
+    public void KeepsSideBySideListsApart()
+    {
+        var xml = $"""
+            <one:Page xmlns:one="{Ns}" name="P"><one:Title/>
+              <one:Outline><one:OEChildren><one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T><![CDATA[left]]></one:T></one:OE></one:OEChildren></one:Outline>
+              <one:Outline><one:OEChildren><one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T><![CDATA[right]]></one:T></one:OE></one:OEChildren></one:Outline>
+            </one:Page>
+            """;
+
+        Assert.Equal("# P\n\n- left\n\n* right", PageMarkdown.Convert(xml).Markdown);
+    }
+
+    [Fact]
+    public void KeepsBareUrlsBare() =>
+        Assert.Equal("# P\n\nSee https://x.test/a_b", Read("<one:OE><one:T><![CDATA[See <a href=\"https://x.test/a_b\">https://x.test/a_b</a>]]></one:T></one:OE>"));
+
+    [Fact]
+    public void EscapesBracketsInLinkText() =>
+        Assert.Equal("# P\n\n[a\\]b \\[c](https://x)", Read("<one:OE><one:T><![CDATA[<a href=\"https://x\">a]b [c</a>]]></one:T></one:OE>"));
+
+    [Fact]
+    public void TitleKeepsCodeEntitiesAndLineBreaks()
+    {
+        Assert.Equal("Running dotnet test", MarkdownToOneNote.SplitTitle("# Running `dotnet test`\n\nBody").Title);
+        Assert.Equal("Q&A", MarkdownToOneNote.SplitTitle("# Q&amp;A").Title);
+        Assert.Equal("Release notes", MarkdownToOneNote.SplitTitle("Release\nnotes\n===\n\nBody").Title);
     }
 
     [Fact]

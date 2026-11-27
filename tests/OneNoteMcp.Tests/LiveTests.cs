@@ -75,6 +75,26 @@ public class LiveTests
             \---
 
             [A link](https://x.test/a%20b)
+
+            #### Four
+
+            ###### Six
+
+            ## Ticket \#
+
+            - item
+
+              > quote in the item
+
+            - next
+
+            ````
+            ```
+            nested fence
+            ```
+            ````
+
+            [1\]: https://example.com
             """.Replace("\r\n", "\n");
 
         // OneNote numbers each list itself, from 1

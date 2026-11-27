@@ -28,9 +28,22 @@ public static class MarkdownToOneNote
             return (null, markdown);
         }
 
-        var title = string.Concat(inline.Descendants<LiteralInline>().Select(l => l.Content.ToString())).Trim();
+        var title = PlainText(inline).Trim();
         // The body starts on the line after the heading. The span can stop before a closing "#".
         var lineEnd = markdown.IndexOf('\n', heading.Span.End);
         return (title, lineEnd < 0 ? "" : markdown[(lineEnd + 1)..]);
     }
+
+    /// <summary>
+    /// The heading's text without formatting: literals, code, entities, and a space per line break.
+    /// </summary>
+    private static string PlainText(ContainerInline container) => string.Concat(container.Select(inline => inline switch
+    {
+        LiteralInline literal => literal.Content.ToString(),
+        CodeInline code => code.Content,
+        HtmlEntityInline entity => entity.Transcoded.ToString(),
+        LineBreakInline => " ",
+        ContainerInline child => PlainText(child),
+        _ => "",
+    }));
 }
