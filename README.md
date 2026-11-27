@@ -1,6 +1,6 @@
 # OneNote MCP server
 
-MCP server that reads, searches, and creates pages in every notebook open in OneNote desktop, including SharePoint and OneDrive notebooks. It drives the desktop app through COM, so it uses the app's own sign-in: no Entra app, no API keys.
+MCP server that reads, searches, creates, and deletes pages in every notebook open in OneNote desktop, including SharePoint and OneDrive notebooks. It drives the desktop app through COM, so it uses the app's own sign-in: no Entra app, no API keys.
 
 Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT) and ported from Python to .NET.
 
@@ -58,7 +58,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 dotnet test
 ```
 
-Live tests run against OneNote desktop when `ONENOTE_LIVE_SECTION` is set. They create pages in that section and delete them permanently.
+Live tests run against OneNote desktop when `ONENOTE_LIVE_SECTION` is set. They create pages in that section and delete them permanently. The delete test leaves its page in Deleted Pages, because OneNote refuses deletes from there.
 
 ```powershell
 $env:ONENOTE_LIVE_SECTION = "My Notebook/Test section"; dotnet test

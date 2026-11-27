@@ -19,7 +19,7 @@ public sealed class LiveFactAttribute : FactAttribute
 }
 
 /// <summary>
-/// Tests against OneNote desktop. They create pages in a test section and delete them permanently.
+/// Tests against OneNote desktop. They create pages in a test section and delete them permanently, except the delete test's page, which stays in Deleted Pages.
 /// </summary>
 /// <remarks>
 /// - <c>ONENOTE_LIVE_SECTION</c>: <c>Notebook name/Section name</c> for test pages
@@ -192,7 +192,8 @@ public class LiveTests
         var sectionId = SectionId();
         Assert.Contains("Not a page: Section", Assert.Throws<McpException>(() => _tools.DeletePage(sectionId)).Message);
 
-        var pageId = JsonDocument.Parse(_tools.CreatePageFromMarkdown(sectionId, "# Live delete test (in Deleted Pages)\n\nx"))
+        var title = $"Live delete test {Guid.NewGuid():N} (in Deleted Pages)";
+        var pageId = JsonDocument.Parse(_tools.CreatePageFromMarkdown(sectionId, $"# {title}\n\nx"))
             .RootElement.GetProperty("page_id").GetString()!;
         try
         {
@@ -200,7 +201,7 @@ public class LiveTests
         }
         catch
         {
-            _client.DeleteHierarchy(pageId, permanently: true);
+            try { _client.DeleteHierarchy(pageId, permanently: true); } catch (McpException) { }
             throw;
         }
 
@@ -208,7 +209,7 @@ public class LiveTests
 
         var deleted = System.Xml.Linq.XElement.Parse(_client.GetHierarchy("", Microsoft.Office.Interop.OneNote.HierarchyScope.hsPages))
             .Descendants(Hierarchy.One + "Page")
-            .Last(p => (bool?)p.Attribute("isInRecycleBin") == true && (string?)p.Attribute("name") == "Live delete test (in Deleted Pages)");
+            .Single(p => (bool?)p.Attribute("isInRecycleBin") == true && (string?)p.Attribute("name") == title);
         Assert.Contains("already in Deleted Pages", Assert.Throws<McpException>(() => _tools.DeletePage((string)deleted.Attribute("ID")!)).Message);
     }
 
