@@ -215,6 +215,7 @@ public static partial class PageMarkdown
             }
         }
 
+        /// <summary>Writes an OE's images, tables, attached files, and nested OEs.</summary>
         /// <remarks>
         /// - Only list items indent their content. Indented text elsewhere would read as code.
         /// </remarks>
