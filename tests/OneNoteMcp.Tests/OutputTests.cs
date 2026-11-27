@@ -25,4 +25,26 @@ public class OutputTests
     [MemberData(nameof(Tools))]
     public void NeedsAnAbsolutePath(Func<OneNoteTools, string, string> tool) =>
         Assert.Contains("must be absolute", Assert.Throws<McpException>(() => tool(_tools, @"notes\page.md")).Message);
+
+    [Theory]
+    [InlineData(@"C:\work\")]
+    [InlineData(@"C:\")]
+    [InlineData(@"\\server\share")]
+    public void NeedsAFileNotAFolder(string path) =>
+        Assert.Contains("must name a file", Assert.Throws<McpException>(() => _tools.GetPage("{page}", path)).Message);
+
+    [Fact]
+    public void RejectsAnExistingFolder() =>
+        Assert.Contains("must name a file", Assert.Throws<McpException>(() => _tools.GetPage("{page}", Path.GetTempPath().TrimEnd('\\'))).Message);
+
+    [Theory]
+    [InlineData(@"C:\work\What now?.md")]
+    [InlineData(@"C:\work\a|b.md")]
+    [InlineData(@"C:\work\page.md:stream")]
+    public void RejectsInvalidFileNames(string path) =>
+        Assert.Contains("can't hold", Assert.Throws<McpException>(() => _tools.GetPage("{page}", path)).Message);
+
+    [Fact]
+    public void RejectsPathAndInlineTogether() =>
+        Assert.Contains("not both", Assert.Throws<McpException>(() => _tools.GetPage("{page}", @"C:\work\page.md", inline: true)).Message);
 }

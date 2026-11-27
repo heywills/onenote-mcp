@@ -178,6 +178,7 @@ public class LiveTests
         WithPage("# Live file test (deleting now)\n\nBody", pageId =>
         {
             var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+            var raw = Path.Combine(folder, "page.xml");
             try
             {
                 var page = Path.Combine(folder, "new", "page.md");
@@ -190,13 +191,23 @@ public class LiveTests
                 _tools.GetPageByLink(_client.GetHyperlink(pageId), byLink);
                 Assert.Equal(File.ReadAllText(page), File.ReadAllText(byLink));
 
-                var raw = Path.Combine(folder, "page.xml");
                 _tools.GetPageRaw(pageId, raw);
                 Assert.Contains("Live file test", File.ReadAllText(raw));
+
+                File.SetAttributes(raw, FileAttributes.ReadOnly);
+                Assert.Contains("Can't save", Assert.Throws<McpException>(() => _tools.GetPageRaw(pageId, raw)).Message);
             }
             finally
             {
-                Directory.Delete(folder, recursive: true);
+                if (File.Exists(raw))
+                {
+                    File.SetAttributes(raw, FileAttributes.Normal);
+                }
+
+                if (Directory.Exists(folder))
+                {
+                    Directory.Delete(folder, recursive: true);
+                }
             }
         });
 

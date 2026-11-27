@@ -14,7 +14,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
 {
     private const int DefaultMaxImageKb = 512;
     private const string OutputPathDescription = "Absolute path of the file to save, such as C:\\work\\page.md. Overwrites it. Required unless inline is true.";
-    private const string InlineDescription = "Return the content in the response instead of saving a file";
+    private const string InlineDescription = "Return the content in the response instead of saving a file. Don't pass outputPath with it.";
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -63,7 +63,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
 
     // Content
 
-    [McpServerTool(Name = "onenote_get_page", ReadOnly = true)]
+    [McpServerTool(Name = "onenote_get_page", ReadOnly = false, Destructive = true)]
     [Description("Save a page as Markdown to outputPath, or return it with inline=true. Images are listed as [Image N] with callback IDs for onenote_get_image.")]
     public string GetPage(
         [Description("The page ID, from onenote_list_pages or a search")] string pageId,
@@ -90,7 +90,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         return $"{markdown}\n\n---\n**Image References:**\n{string.Join("\n", refs)}\n";
     }
 
-    [McpServerTool(Name = "onenote_get_page_by_link", ReadOnly = true)]
+    [McpServerTool(Name = "onenote_get_page_by_link", ReadOnly = false, Destructive = true)]
     [Description("""
         Get a page as Markdown from its OneNote "Copy link to page" link.
         Accepts the onenote: link, the https://.../_layouts/Doc.aspx web link, or both pasted together.
@@ -136,7 +136,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         throw new McpException($"Page not found in its section ({string.Join(", ", sectionIds)})");
     }
 
-    [McpServerTool(Name = "onenote_get_page_raw", ReadOnly = true)]
+    [McpServerTool(Name = "onenote_get_page_raw", ReadOnly = false, Destructive = true)]
     [Description("Save a page's raw OneNote XML to outputPath, or return it with inline=true. For debugging.")]
     public string GetPageRaw(
         [Description("The page ID")] string pageId,
@@ -264,12 +264,18 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     /// </remarks>
     private static void CheckOutput(string outputPath, bool inline)
     {
+        var hasPath = !string.IsNullOrWhiteSpace(outputPath);
         if (inline)
         {
+            if (hasPath)
+            {
+                throw new McpException("Pass outputPath or inline=true, not both");
+            }
+
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(outputPath))
+        if (!hasPath)
         {
             throw new McpException("Pass outputPath, an absolute file path such as C:\\work\\page.md, or pass inline=true");
         }
@@ -277,6 +283,18 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         if (!Path.IsPathFullyQualified(outputPath))
         {
             throw new McpException($"outputPath must be absolute, such as C:\\work\\page.md, not \"{outputPath}\"");
+        }
+
+        var name = Path.GetFileName(outputPath);
+        if (name.Length == 0 || Path.GetDirectoryName(outputPath) is null || Directory.Exists(outputPath))
+        {
+            throw new McpException($"outputPath must name a file, not a folder: \"{outputPath}\"");
+        }
+
+        // Includes ':', which would otherwise write to an NTFS alternate data stream
+        if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            throw new McpException($"outputPath has characters a file name can't hold: \"{name}\"");
         }
     }
 
@@ -287,10 +305,17 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
             return content;
         }
 
-        var path = Path.GetFullPath(outputPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, content);
-        return ToJson(new { Status = "saved", Path = path, PageId = pageId });
+        try
+        {
+            var path = Path.GetFullPath(outputPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, content);
+            return ToJson(new { Status = "saved", Path = path, PageId = pageId });
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new McpException($"Can't save \"{outputPath}\": {e.Message}", e);
+        }
     }
 
     private string CreatePageFromHtml(string sectionId, string title, string contentHtml, bool fromMarkdown = false)
