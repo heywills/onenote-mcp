@@ -207,6 +207,27 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         return CreatePageFromHtml(sectionId, title, MarkdownToOneNote.ToHtml(markdown), fromMarkdown: true);
     }
 
+    [McpServerTool(Name = "onenote_delete_page", Destructive = true, Idempotent = false)]
+    [Description("Move a page to its notebook's Deleted Pages, where OneNote keeps it for 60 days. Its subpages stay in the section. Deletes pages only, never sections or notebooks.")]
+    public string DeletePage([Description("The page ID")] string pageId)
+    {
+        var page = XElement.Parse(oneNote.GetHierarchy(pageId, HierarchyScope.hsSelf));
+        if (page.Name != One + "Page")
+        {
+            throw new McpException($"Not a page: {page.Name.LocalName}");
+        }
+
+        // OneNote's own error for this is "The page is read-only"
+        if ((bool?)page.Attribute("isInRecycleBin") == true)
+        {
+            throw new McpException("The page is already in Deleted Pages");
+        }
+
+        oneNote.DeleteHierarchy(pageId);
+        // No page ID: the page gets a new one in Deleted Pages
+        return ToJson(new { Status = "moved to Deleted Pages", Title = (string?)page.Attribute("name") });
+    }
+
     // Helpers
 
     private string CreatePageFromHtml(string sectionId, string title, string contentHtml, bool fromMarkdown = false)
@@ -227,7 +248,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         catch
         {
             // Don't leave a blank "Untitled page" behind
-            try { oneNote.DeleteHierarchy(pageId); } catch (McpException) { }
+            try { oneNote.DeleteHierarchy(pageId, permanently: true); } catch (McpException) { }
             throw;
         }
 

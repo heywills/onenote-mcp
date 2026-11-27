@@ -19,7 +19,7 @@ public sealed class LiveFactAttribute : FactAttribute
 }
 
 /// <summary>
-/// Tests against OneNote desktop. They create pages in a test section and delete them permanently.
+/// Tests against OneNote desktop. They create pages in a test section and delete them.
 /// </summary>
 /// <remarks>
 /// - <c>ONENOTE_LIVE_SECTION</c>: <c>Notebook name/Section name</c> for test pages
@@ -185,6 +185,36 @@ public class LiveTests
                 Assert.StartsWith($"page_id: `{targetId}`", _tools.GetPageByLink(link));
             }));
 
+    /// <remarks>
+    /// - Leaves the page in Deleted Pages: OneNote refuses to delete from there through the API
+    /// </remarks>
+    [LiveFact]
+    public void DeletesPagesOnly()
+    {
+        var (notebookId, sectionId) = TestIds();
+        Assert.Contains("Not a page: Section", Assert.Throws<McpException>(() => _tools.DeletePage(sectionId)).Message);
+
+        var title = $"Live delete test {Guid.NewGuid():N} (in Deleted Pages)";
+        var pageId = JsonDocument.Parse(_tools.CreatePageFromMarkdown(sectionId, $"# {title}\n\nx"))
+            .RootElement.GetProperty("page_id").GetString()!;
+        try
+        {
+            Assert.Contains("moved to Deleted Pages", _tools.DeletePage(pageId));
+        }
+        catch
+        {
+            try { _client.DeleteHierarchy(pageId, permanently: true); } catch (McpException) { }
+            throw;
+        }
+
+        Assert.DoesNotContain(pageId, _tools.ListPages(sectionId));
+
+        var deleted = System.Xml.Linq.XElement.Parse(_client.GetHierarchy(notebookId, Microsoft.Office.Interop.OneNote.HierarchyScope.hsPages))
+            .Descendants(Hierarchy.One + "Page")
+            .Single(p => (bool?)p.Attribute("isInRecycleBin") == true && (string?)p.Attribute("name") == title);
+        Assert.Contains("already in Deleted Pages", Assert.Throws<McpException>(() => _tools.DeletePage((string)deleted.Attribute("ID")!)).Message);
+    }
+
     [LiveFact]
     public void ReportsOneNoteErrors()
     {
@@ -220,7 +250,9 @@ public class LiveTests
         }
     }
 
-    private string SectionId()
+    private string SectionId() => TestIds().Section;
+
+    private (string Notebook, string Section) TestIds()
     {
         var path = Environment.GetEnvironmentVariable(SectionVariable)!;
         var slash = path.LastIndexOf('/');
@@ -235,7 +267,7 @@ public class LiveTests
 
         var notebookId = IdOf(_tools.ListNotebooks(), notebookName)
             ?? throw new InvalidOperationException($"Notebook \"{notebookName}\" isn't open in OneNote");
-        return IdOf(_tools.ListSections(notebookId), sectionName)
-            ?? throw new InvalidOperationException($"Section \"{sectionName}\" not found in \"{notebookName}\"");
+        return (notebookId, IdOf(_tools.ListSections(notebookId), sectionName)
+            ?? throw new InvalidOperationException($"Section \"{sectionName}\" not found in \"{notebookName}\""));
     }
 }
