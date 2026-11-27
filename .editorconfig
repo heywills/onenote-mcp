@@ -1,0 +1,13 @@
+root = true
+
+[*.cs]
+# Code metrics; default thresholds (CA1502: 25, CA1505: 10, CA1506: 95 type / 40 member, CA1501: 5)
+dotnet_diagnostic.CA1501.severity = warning
+dotnet_diagnostic.CA1502.severity = warning
+dotnet_diagnostic.CA1505.severity = warning
+dotnet_diagnostic.CA1506.severity = warning
+dotnet_diagnostic.CA1508.severity = warning
+
+# Composition root; coupled to everything by design
+[src/**/Program.cs]
+dotnet_diagnostic.CA1506.severity = none

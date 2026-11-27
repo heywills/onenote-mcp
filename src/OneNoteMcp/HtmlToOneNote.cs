@@ -240,77 +240,97 @@ public static partial class HtmlToOneNote
                 }
 
                 Flush();
-                switch (e.LocalName)
-                {
-                    case "br":
-                        break;
-                    case "h1" or "h2" or "h3" or "h4" or "h5" or "h6":
-                        if (parent.HasElements)
-                        {
-                            Oe(parent, ""); // blank line before a heading, like hand-made pages
-                        }
-
-                        Oe(parent, InlineHtml(e.ChildNodes), style: StyleIndex(e.LocalName));
-                        break;
-                    case "blockquote":
-                        if (!_inQuote && parent.Elements(One + "OE").LastOrDefault() is { } previous && indexes.TryGetValue("blockquote", out var quoteIndex)
-                            && (string?)previous.Attribute("quickStyleIndex") == quoteIndex.ToString())
-                        {
-                            Oe(parent, ""); // keeps back-to-back quotes apart
-                        }
-
-                        var outerQuote = _inQuote;
-                        _inQuote = true;
-                        Blocks(e.ChildNodes, parent);
-                        _inQuote = outerQuote;
-                        break;
-                    case "ul" or "ol":
-                        // Keeps back-to-back lists of the same kind apart. Bullets then numbers, or a list then a quoted list, already read as two lists.
-                        var kind = e.LocalName == "ol" ? "Number" : "Bullet";
-                        var previousOe = parent.Elements(One + "OE").LastOrDefault();
-                        var previousQuoted = previousOe is not null && indexes.TryGetValue("blockquote", out var q) && (string?)previousOe.Attribute("quickStyleIndex") == q.ToString();
-                        if (previousOe?.Element(One + "List")?.Element(One + kind) is not null && previousQuoted == _inQuote)
-                        {
-                            Oe(parent, "", style: _inQuote ? StyleIndex("blockquote") : null);
-                        }
-
-                        ListItems(e, parent);
-                        break;
-                    case "table":
-                        // Tables can't hold the quote style
-                        var tableInQuote = _inQuote;
-                        var outerTable = _inTable;
-                        (_inQuote, _inTable) = (false, true);
-                        Table(e, parent);
-                        (_inQuote, _inTable) = (tableInQuote, outerTable);
-                        break;
-                    case "pre":
-                        var code = StyleIndex("code");
-                        if (parent.Elements(One + "OE").LastOrDefault() is { } last && (string?)last.Attribute("quickStyleIndex") == code.ToString())
-                        {
-                            Oe(parent, ""); // keeps back-to-back code blocks apart
-                        }
-
-                        // Only the final newline ends the code. Leading and inner blank lines are code.
-                        var codeText = e.TextContent.EndsWith('\n') ? e.TextContent[..^1] : e.TextContent;
-                        foreach (var line in codeText.Split('\n'))
-                        {
-                            var escaped = CodeHtml(line.TrimEnd('\r'));
-                            Oe(parent, escaped.Length > 0 ? escaped : "&nbsp;", style: code);
-                        }
-
-                        break;
-                    case "hr":
-                        Oe(parent, new string('―', 20));
-                        break;
-                    default: // p, div, section, etc.
-                        Blocks(e.ChildNodes, parent);
-                        break;
-                }
+                Block(e, parent);
             }
 
             Flush();
         }
+
+        private void Block(IElement e, XElement parent)
+        {
+            switch (e.LocalName)
+            {
+                case "br":
+                    break;
+                case "h1" or "h2" or "h3" or "h4" or "h5" or "h6":
+                    if (parent.HasElements)
+                    {
+                        Oe(parent, ""); // blank line before a heading, like hand-made pages
+                    }
+
+                    Oe(parent, InlineHtml(e.ChildNodes), style: StyleIndex(e.LocalName));
+                    break;
+                case "blockquote":
+                    Quote(e, parent);
+                    break;
+                case "ul" or "ol":
+                    List(e, parent);
+                    break;
+                case "table":
+                    // Tables can't hold the quote style
+                    var tableInQuote = _inQuote;
+                    var outerTable = _inTable;
+                    (_inQuote, _inTable) = (false, true);
+                    Table(e, parent);
+                    (_inQuote, _inTable) = (tableInQuote, outerTable);
+                    break;
+                case "pre":
+                    Code(e, parent);
+                    break;
+                case "hr":
+                    Oe(parent, new string('―', 20));
+                    break;
+                default: // p, div, section, etc.
+                    Blocks(e.ChildNodes, parent);
+                    break;
+            }
+        }
+
+        private void Quote(IElement quote, XElement parent)
+        {
+            if (!_inQuote && HasStyle(parent.Elements(One + "OE").LastOrDefault(), "blockquote"))
+            {
+                Oe(parent, ""); // keeps back-to-back quotes apart
+            }
+
+            var outerQuote = _inQuote;
+            _inQuote = true;
+            Blocks(quote.ChildNodes, parent);
+            _inQuote = outerQuote;
+        }
+
+        private void List(IElement list, XElement parent)
+        {
+            // Keeps back-to-back lists of the same kind apart. Bullets then numbers, or a list then a quoted list, already read as two lists.
+            var kind = list.LocalName == "ol" ? "Number" : "Bullet";
+            var previous = parent.Elements(One + "OE").LastOrDefault();
+            if (previous?.Element(One + "List")?.Element(One + kind) is not null && HasStyle(previous, "blockquote") == _inQuote)
+            {
+                Oe(parent, "", style: _inQuote ? StyleIndex("blockquote") : null);
+            }
+
+            ListItems(list, parent);
+        }
+
+        private void Code(IElement pre, XElement parent)
+        {
+            var code = StyleIndex("code");
+            if (HasStyle(parent.Elements(One + "OE").LastOrDefault(), "code"))
+            {
+                Oe(parent, ""); // keeps back-to-back code blocks apart
+            }
+
+            // Only the final newline ends the code. Leading and inner blank lines are code.
+            var codeText = pre.TextContent.EndsWith('\n') ? pre.TextContent[..^1] : pre.TextContent;
+            foreach (var line in codeText.Split('\n'))
+            {
+                var escaped = CodeHtml(line.TrimEnd('\r'));
+                Oe(parent, escaped.Length > 0 ? escaped : "&nbsp;", style: code);
+            }
+        }
+
+        private bool HasStyle(XElement? oe, string style) =>
+            oe is not null && indexes.TryGetValue(style, out var index) && (string?)oe.Attribute("quickStyleIndex") == index.ToString();
 
         private void ListItems(IElement list, XElement parent)
         {
