@@ -92,14 +92,17 @@ public static partial class HtmlToOneNote
     /// <summary>
     /// Renders inline nodes as the HTML OneNote accepts inside <c>one:T</c>.
     /// </summary>
-    private static string InlineHtml(IEnumerable<INode> nodes)
+    /// <param name="inCode">Keep every space, as <c>&amp;nbsp;</c></param>
+    private static string InlineHtml(IEnumerable<INode> nodes, bool inCode = false)
     {
         var sb = new StringBuilder();
         foreach (var n in nodes)
         {
             if (n is IText t)
             {
-                sb.Append(WebUtility.HtmlEncode(Whitespace().Replace(t.Data, " ")));
+                sb.Append(inCode
+                    ? WebUtility.HtmlEncode(t.Data).Replace(" ", "&nbsp;")
+                    : WebUtility.HtmlEncode(Whitespace().Replace(t.Data, " ")));
                 continue;
             }
 
@@ -108,7 +111,7 @@ public static partial class HtmlToOneNote
                 continue;
             }
 
-            var inner = InlineHtml(e.ChildNodes);
+            var inner = InlineHtml(e.ChildNodes, inCode || e.LocalName == "code");
             sb.Append(e.LocalName switch
             {
                 "b" or "strong" => $"<b>{inner}</b>",
@@ -133,7 +136,11 @@ public static partial class HtmlToOneNote
     private sealed class Builder(Dictionary<string, int> indexes, int nextIndex)
     {
         private bool _inQuote;
-        private int _numberSequence;
+        private int _listDepth;
+
+        /// <summary>Per list depth: whether the next numbered list uses <c>##)</c>.</summary>
+        /// <remarks>OneNote continues numbering across lists with the same format, even with paragraphs between them. Alternating formats restarts each list at 1.</remarks>
+        private readonly Dictionary<int, bool> _altNumberFormat = [];
 
         /// <summary>Styles this content needs that the page doesn't have yet</summary>
         public List<(string Name, int Index)> NewStyles { get; } = [];
@@ -149,8 +156,9 @@ public static partial class HtmlToOneNote
             return index;
         }
 
-        /// <param name="number">For a numbered item, its number and the list's sequence</param>
-        private static XElement Oe(XElement parent, string innerHtml, int? style = null, string? listKind = null, (int Value, int Sequence) number = default)
+        /// <param name="number">For a numbered item, its number and format (<c>##.</c> or <c>##)</c>)</param>
+        /// <remarks>numberSequence picks the number style (0 is 1, 2, 3; 1 is I, II, III), so it's always 0.</remarks>
+        private static XElement Oe(XElement parent, string innerHtml, int? style = null, string? listKind = null, (int Value, string Format) number = default)
         {
             var oe = new XElement(One + "OE");
             if (style is not null)
@@ -161,7 +169,7 @@ public static partial class HtmlToOneNote
             if (listKind is not null)
             {
                 oe.Add(new XElement(One + "List", listKind == "ol"
-                    ? new XElement(One + "Number", new XAttribute("numberSequence", number.Sequence), new XAttribute("numberFormat", "##."), new XAttribute("text", $"{number.Value}."))
+                    ? new XElement(One + "Number", new XAttribute("numberSequence", "0"), new XAttribute("numberFormat", number.Format ?? "##."), new XAttribute("text", $"{number.Value}{(number.Format ?? "##.")[^1]}"))
                     : new XElement(One + "Bullet", new XAttribute("bullet", "2"))));
             }
 
@@ -215,8 +223,8 @@ public static partial class HtmlToOneNote
                         Oe(parent, InlineHtml(e.ChildNodes), style: StyleIndex(e.LocalName));
                         break;
                     case "blockquote":
-                        if (!_inQuote && parent.Elements(One + "OE").LastOrDefault() is { } previous
-                            && (string?)previous.Attribute("quickStyleIndex") == StyleIndex("blockquote").ToString())
+                        if (!_inQuote && parent.Elements(One + "OE").LastOrDefault() is { } previous && indexes.TryGetValue("blockquote", out var quoteIndex)
+                            && (string?)previous.Attribute("quickStyleIndex") == quoteIndex.ToString())
                         {
                             Oe(parent, ""); // keeps back-to-back quotes apart
                         }
@@ -227,10 +235,21 @@ public static partial class HtmlToOneNote
                         _inQuote = outerQuote;
                         break;
                     case "ul" or "ol":
+                        // Keeps back-to-back lists of the same kind apart. Bullets then numbers already read as two lists.
+                        var kind = e.LocalName == "ol" ? "Number" : "Bullet";
+                        if (parent.Elements(One + "OE").LastOrDefault()?.Element(One + "List")?.Element(One + kind) is not null)
+                        {
+                            Oe(parent, "");
+                        }
+
                         ListItems(e, parent);
                         break;
                     case "table":
+                        // Tables can't hold the quote style
+                        var tableInQuote = _inQuote;
+                        _inQuote = false;
                         Table(e, parent);
+                        _inQuote = tableInQuote;
                         break;
                     case "pre":
                         var code = StyleIndex("code");
@@ -261,7 +280,15 @@ public static partial class HtmlToOneNote
         private void ListItems(IElement list, XElement parent)
         {
             var number = int.TryParse(list.GetAttribute("start"), out var start) ? start : 1;
-            var sequence = list.LocalName == "ol" ? _numberSequence++ : 0;
+            var format = "##.";
+            if (list.LocalName == "ol")
+            {
+                var alt = _altNumberFormat.GetValueOrDefault(_listDepth);
+                _altNumberFormat[_listDepth] = !alt;
+                format = alt ? "##)" : "##.";
+            }
+
+            _listDepth++;
             foreach (var li in list.Children.Where(c => c.LocalName == "li"))
             {
                 var inline = li.ChildNodes.Where(IsInline).ToList();
@@ -274,7 +301,7 @@ public static partial class HtmlToOneNote
                     nested.RemoveAt(0);
                 }
 
-                var oe = Oe(parent, InlineHtml(inline), style: _inQuote ? StyleIndex("blockquote") : null, listKind: list.LocalName, number: (number++, sequence));
+                var oe = Oe(parent, InlineHtml(inline), style: _inQuote ? StyleIndex("blockquote") : null, listKind: list.LocalName, number: (number++, format));
                 if (nested.Count > 0)
                 {
                     var children = new XElement(One + "OEChildren");
@@ -285,6 +312,8 @@ public static partial class HtmlToOneNote
                     }
                 }
             }
+
+            _listDepth--;
         }
 
         private void Table(IElement table, XElement parent)

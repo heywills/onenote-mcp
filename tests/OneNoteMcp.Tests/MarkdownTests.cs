@@ -92,13 +92,52 @@ public class MarkdownTests
     public void RoundTripsEdgeCases(string markdown) =>
         Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
 
+    // OneNote: numberSequence picks the style (1 is I, II), and numbering continues while the format stays the same.
     [Fact]
-    public void GivesEachNumberedListItsOwnSequence()
+    public void AlternatesNumberFormatsSoEachListRestarts()
     {
         var page = new XElement(XName.Get("Page", Ns));
-        HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml("1. A\n2. B\n\nText\n\n1. C"));
+        HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml("1. A\n2. B\n\nText\n\n1. C\n   1. Nested\n\nText\n\n1. D"));
 
-        Assert.Equal(["0", "0", "1"], page.Descendants(XName.Get("Number", Ns)).Select(n => (string?)n.Attribute("numberSequence")));
+        var numbers = page.Descendants(XName.Get("Number", Ns)).ToList();
+        Assert.All(numbers, n => Assert.Equal("0", (string?)n.Attribute("numberSequence")));
+        Assert.Equal(["##.", "##.", "##)", "##.", "##."], numbers.Select(n => (string?)n.Attribute("numberFormat")));
+    }
+
+    [Fact]
+    public void KeepsWholeItalicInAStyleThatIsNotItalic() =>
+        Assert.Equal("# Sample\n\n> *whole quote italic*", RoundTrip("> *whole quote italic*"));
+
+    [Theory]
+    [InlineData("1. a\n\n1) b")]
+    [InlineData("- a\n\n* b")]
+    [InlineData("1. a\n\nText\n\n1. b\n\nText\n\n1. c")]
+    [InlineData("`x  =  1`")]
+    public void RoundTripsListsAndCodeSpaces(string markdown) =>
+        Assert.Equal($"# Sample\n\n{markdown}", RoundTrip(markdown));
+
+    [Fact]
+    public void MergesNeighborRunsWithTheSameFormatting() =>
+        Assert.Equal("# P\n\n**foobar** and *x y*", Read(
+            "<one:OE><one:T style=\"font-weight:bold\"><![CDATA[foo]]></one:T><one:T style=\"font-weight:bold\"><![CDATA[bar]]></one:T>"
+            + "<one:T><![CDATA[ and <span style='font-style:italic'>x </span><span style='font-style:italic'>y</span>]]></one:T></one:OE>"));
+
+    [Fact]
+    public void ListItemWithoutTextDoesNotIndentItsChildren() =>
+        Assert.Equal("# P\n\nchild", Read(
+            "<one:OE><one:List><one:Number numberSequence=\"0\" numberFormat=\"##.\" text=\"1.\"/></one:List><one:OEChildren><one:OE><one:T><![CDATA[child]]></one:T></one:OE></one:OEChildren></one:OE>"));
+
+    [Fact]
+    public void TrimsByteOrderMarkBeforeConverting() =>
+        Assert.StartsWith("<h1>", MarkdownToOneNote.ToHtml((char)0xFEFF + "# Heading"));
+
+    [Fact]
+    public void TableInsideAQuoteDoesNotAddTheQuoteStyle()
+    {
+        var page = new XElement(XName.Get("Page", Ns));
+        HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml("> | A |\n> | --- |\n> | 1 |"));
+
+        Assert.Empty(page.Elements(XName.Get("QuickStyleDef", Ns)));
     }
 
     private static string Read(string body, string pageName = "P", bool hasTitle = true) =>
@@ -124,7 +163,7 @@ public class MarkdownTests
     {
         var xml = $"""
             <one:Page xmlns:one="{Ns}" name="P"><one:Title/>
-              <one:QuickStyleDef index="4" name="h4"/><one:QuickStyleDef index="6" name="h6"/>
+              <one:QuickStyleDef index="4" name="h4" italic="true"/><one:QuickStyleDef index="6" name="h6" italic="true"/>
               <one:Outline><one:OEChildren>
                 <one:OE quickStyleIndex="4"><one:T><![CDATA[<span style='font-style:italic'>Four</span>]]></one:T></one:OE>
                 <one:OE quickStyleIndex="6" style="font-style:italic"><one:T><![CDATA[Six]]></one:T></one:OE>

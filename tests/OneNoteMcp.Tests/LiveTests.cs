@@ -102,12 +102,32 @@ public class LiveTests
               >   - c
 
             Use \&nbsp; but keep R&D, and see https://x.test/\_x\_/a
+
+            1. one
+            2. two
+
+            1) adjacent list
+
+            - bullets
+
+            * adjacent bullets
+
+            `x  =  1` and > *whole quote italic* stays text
+
+            > *whole quote italic*
             """.Replace("\r\n", "\n");
 
         // OneNote numbers each list itself, from 1
         var expected = markdown.Replace("3. Starts at three\n4. Four", "1. Starts at three\n2. Four");
         WithPage(markdown, pageId => Assert.Equal(expected, _tools.GetPage(pageId)));
     }
+
+    // What OneNote shows, not what the reader prints: each list restarts at 1, in Arabic numerals.
+    [LiveFact]
+    public void RestartsEachNumberedListInOneNote() =>
+        WithPage("# Live numbering test (deleting now)\n\n1. a\n2. b\n\nText\n\n1. c\n2. d\n\nText\n\n1. e\n   1. nested", pageId =>
+            Assert.Equal(["1.", "2.", "1)", "2)", "1.", "1."], System.Xml.Linq.XElement.Parse(_client.GetPageContent(pageId))
+                .Descendants(Hierarchy.One + "Number").Select(n => (string?)n.Attribute("text"))));
 
     [LiveFact]
     public void OpensPageByLink() =>

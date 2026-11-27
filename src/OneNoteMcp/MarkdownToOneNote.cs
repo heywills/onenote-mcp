@@ -15,7 +15,7 @@ public static class MarkdownToOneNote
         .UseEmphasisExtras(Markdig.Extensions.EmphasisExtras.EmphasisExtraOptions.Strikethrough)
         .Build();
 
-    public static string ToHtml(string markdown) => Markdown.ToHtml(markdown, Pipeline);
+    public static string ToHtml(string markdown) => Markdown.ToHtml(markdown.TrimStart('﻿'), Pipeline);
 
     /// <summary>
     /// Splits a leading level-1 heading (<c># Title</c> or setext) off the Markdown. Returns a null title when there isn't one.

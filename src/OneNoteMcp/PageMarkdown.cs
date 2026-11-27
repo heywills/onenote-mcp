@@ -29,7 +29,7 @@ public static partial class PageMarkdown
         var title = (string?)root.Attribute("name") ?? (string?)root.Attribute("ID") ?? "Untitled";
         var styles = root.Elements(One + "QuickStyleDef").ToDictionary(
             q => (string?)q.Attribute("index") ?? "",
-            q => (string?)q.Attribute("name") ?? "");
+            q => (Name: (string?)q.Attribute("name") ?? "", Italic: (string?)q.Attribute("italic") == "true"));
 
         // Without a Title element, OneNote names the page after its first line, so that line repeats the name.
         var repeatedTitle = root.Element(One + "Title") is null
@@ -65,7 +65,7 @@ public static partial class PageMarkdown
     public static string CleanText(string text) =>
         System.Net.WebUtility.HtmlDecode(Tags().Replace(text, "")).Replace(' ', ' ');
 
-    private sealed class Writer(Dictionary<string, string> styles, XElement? repeatedTitle)
+    private sealed class Writer(Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle)
     {
         private readonly List<string> _lines = [];
         private string _kind = "";
@@ -103,7 +103,7 @@ public static partial class PageMarkdown
         /// <param name="number">Position in a numbered list, for items without OneNote's number text</param>
         private void Oe(XElement oe, string indent, int number, string? quoteColumn)
         {
-            var styleName = styles.GetValueOrDefault((string?)oe.Attribute("quickStyleIndex") ?? "") ?? "";
+            var (styleName, styleItalic) = styles.TryGetValue((string?)oe.Attribute("quickStyleIndex") ?? "", out var s) ? s : ("", false);
             var quote = styleName == "blockquote";
 
             // Inside an enclosing quote, "> " stays at that quote's column and the rest of the indent follows it.
@@ -111,10 +111,16 @@ public static partial class PageMarkdown
             var prefix = quoteColumn is null ? indent : quoteColumn + "> " + indent[quoteColumn.Length..];
             var list = oe.Element(One + "List");
 
+            // A top-level switch between bullets and numbers already starts a new list
+            if (list is not null && _kind == "list" && prefix is "" or "> " && (list.Element(One + "Bullet") is not null) != _topLevelBullet)
+            {
+                _altMarkers = false;
+            }
+
             // OneNote's number text can be a letter or roman numeral ("a.", "iv."): Markdown takes digits only.
             var numberText = (string?)list?.Element(One + "Number")?.Attribute("text");
             var marker = list?.Element(One + "Number") is not null
-                ? (numberText is not null && NumberMarker().IsMatch(numberText) ? numberText[..^1] : $"{number}") + (_altMarkers ? ") " : ". ")
+                ? (numberText is not null && NumberMarker().Match(numberText) is { Success: true } digits ? digits.Groups[1].Value : $"{number}") + (_altMarkers ? ") " : ". ")
                 : list is not null ? (_altMarkers ? "* " : "- ") : null;
 
             var html = OeHtml(oe);
@@ -128,15 +134,15 @@ public static partial class PageMarkdown
             {
                 var heading = Regex.Match(styleName, "^h([1-6])$");
 
-                // OneNote copies a style's italic onto the text: quotes, and the h4 and h6 headings.
-                var text = InlineMarkdown(html, (string?)oe.Attribute("style") ?? "", ignoreUniformItalic: quote || styleName is "h4" or "h6").Trim();
+                // OneNote copies an italic style's italic onto the text, such as its own Quote, h4, and h6.
+                var text = InlineMarkdown(html, (string?)oe.Attribute("style") ?? "", ignoreUniformItalic: styleItalic).Trim();
                 if (marker is not null)
                 {
                     ListItem(prefix, marker, EscapeLineStart(text), quote);
                 }
                 else if (text.Length == 0)
                 {
-                    Blank();
+                    Blank(indent);
                 }
                 else if (heading.Success)
                 {
@@ -162,8 +168,8 @@ public static partial class PageMarkdown
                         Paragraph(indent, $"[Attached: {Escape((string?)child.Attribute("preferredName") ?? "file")}]", false);
                         break;
                     case "OEChildren":
-                        // Only list items indent their children. Indented text elsewhere would read as code.
-                        Block(child, marker is null ? indent : indent + new string(' ', marker.Length), quoteColumn);
+                        // Only list items with a line indent their children. Indented text elsewhere would read as code.
+                        Block(child, marker is null || !hasText ? indent : indent + new string(' ', marker.Length), quoteColumn);
                         break;
                 }
             }
@@ -197,6 +203,7 @@ public static partial class PageMarkdown
                 return;
             }
 
+            ResetMarkersAtTopLevel(indent);
             Separate(null);
             var columns = rows.Max(r => r.Count);
             foreach (var (row, i) in rows.Select((row, i) => (row, i)))
@@ -218,6 +225,7 @@ public static partial class PageMarkdown
         /// <param name="prefix">Indent, plus "> " when quoted</param>
         private void Paragraph(string prefix, string text, bool quote)
         {
+            ResetMarkersAtTopLevel(prefix);
             Separate(quote ? prefix : null);
             _lines.Add(prefix + text);
             _kind = "paragraph";
@@ -254,6 +262,7 @@ public static partial class PageMarkdown
                     return; // a blank code line outside a block
                 }
 
+                ResetMarkersAtTopLevel(indent);
                 Separate(null);
                 _codeIndent = indent;
                 _codeStart = _lines.Count;
@@ -265,16 +274,33 @@ public static partial class PageMarkdown
         }
 
         /// <summary>
-        /// A blank OE ends an open code block or quote, so back-to-back ones stay separate.
+        /// A blank OE ends an open code block, quote, or top-level list, so back-to-back ones stay separate.
         /// </summary>
-        private void Blank()
+        /// <remarks>The next list after a blank uses the other markers, or Markdown would join the two lists.</remarks>
+        private void Blank(string indent)
         {
-            if (_kind == "code")
+            if (_kind == "list" && indent.Length == 0)
+            {
+                _altMarkers = !_altMarkers;
+                Separate(null);
+            }
+            else if (_kind == "code")
             {
                 Separate(null);
             }
 
             _quotePrefix = null;
+        }
+
+        /// <summary>
+        /// Top-level content between lists ends the need for alternate markers.
+        /// </summary>
+        private void ResetMarkersAtTopLevel(string prefix)
+        {
+            if (prefix is "" or "> ")
+            {
+                _altMarkers = false;
+            }
         }
 
         /// <summary>
@@ -332,15 +358,17 @@ public static partial class PageMarkdown
         return Wrap(text, paragraph.Bold && !ignore.Bold ? "**" : "");
     }
 
-    private static string Inline(INodeList nodes, bool inCode, (bool Bold, bool Italic) ignore)
+    private static string Inline(IEnumerable<INode> nodes, bool inCode, (bool Bold, bool Italic) ignore)
     {
         var sb = new StringBuilder();
-        foreach (var node in nodes)
+        var list = nodes.ToList();
+        for (var i = 0; i < list.Count; i++)
         {
+            var node = list[i];
             if (node is IText t)
             {
-                var text = Whitespace().Replace(t.Data.Replace(' ', ' '), " ");
-                sb.Append(inCode ? text : Escape(text));
+                var text = t.Data.Replace(' ', ' ');
+                sb.Append(inCode ? text : Escape(Whitespace().Replace(text, " ")));
                 continue;
             }
 
@@ -349,10 +377,19 @@ public static partial class PageMarkdown
                 continue;
             }
 
+            // Neighbors with the same formatting (OneNote splits runs) wrap once: **foobar**, not **foo****bar**.
+            var run = new List<IElement> { e };
+            while (e.LocalName is not ("a" or "br" or "img") && i + 1 < list.Count && list[i + 1] is IElement next
+                && next.LocalName == e.LocalName && next.GetAttribute("style") == e.GetAttribute("style"))
+            {
+                run.Add(next);
+                i++;
+            }
+
             var style = StyleOf(e.GetAttribute("style") ?? "");
             var tag = e.LocalName;
             var code = inCode || style.Code || tag == "code";
-            var inner = Inline(e.ChildNodes, code, ignore);
+            var inner = Inline(run.SelectMany(r => r.ChildNodes), code, ignore);
 
             if (tag == "br")
             {
@@ -526,6 +563,7 @@ public static partial class PageMarkdown
     [GeneratedRegex(@"^(―|\\_){3,}$")]
     private static partial Regex HorizontalRule();
 
-    [GeneratedRegex(@"^\d+\.$")]
+    // OneNote's number text: 1. or 1)
+    [GeneratedRegex(@"^(\d+)[.)]$")]
     private static partial Regex NumberMarker();
 }
