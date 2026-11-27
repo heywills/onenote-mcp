@@ -779,7 +779,7 @@ public static partial class PageMarkdown
     /// - Backslashes are doubled: Markdown reads one before punctuation as an escape, which breaks \\server\share links.
     /// - OneNote page links come back in the "Copy link to page" form.
     /// </remarks>
-    public static string LinkDestination(string href)
+    private static string LinkDestination(string href)
     {
         href = OneNoteLink(href).Replace("\\", "\\\\").Replace("<", "%3C").Replace(">", "%3E");
         return href.IndexOfAny([' ', '(', ')']) >= 0 ? $"<{href}>" : href;

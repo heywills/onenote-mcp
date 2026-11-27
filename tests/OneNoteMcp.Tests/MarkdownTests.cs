@@ -145,8 +145,7 @@ public class MarkdownTests
     public void WritesImagesAsTheCallerAsks()
     {
         var xml = $"""<one:Page xmlns:one="{Ns}" name="P"><one:Title/><one:Outline><one:OEChildren><one:OE><one:Image><one:CallbackID callbackID="cb"/></one:Image></one:OE></one:OEChildren></one:Outline></one:Page>""";
-        var link = PageMarkdown.LinkDestination("My page_images/image-1.png");
-        Assert.Equal("# P\n\n![Image 1](<My page_images/image-1.png>)", PageMarkdown.Convert(xml, img => $"![Image {img.Index}]({link})").Markdown);
+        Assert.Equal("# P\n\n![Image 1](My%20page_images/image-1.png)", PageMarkdown.Convert(xml, img => $"![Image {img.Index}](My%20page_images/image-{img.Index}.png)").Markdown);
     }
 
     [Theory]

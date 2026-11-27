@@ -319,15 +319,16 @@ public class LiveTests
         var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
         try
         {
-            var page = Path.Combine(folder, "My page.md");
+            // '#' and spaces in the name: the link must still resolve
+            var page = Path.Combine(folder, "Sprint #4.md");
             var saved = JsonDocument.Parse(_tools.GetPageByLink(link, page)).RootElement;
             Assert.True(saved.GetProperty("images").GetInt32() > 0);
 
             var markdown = File.ReadAllText(page);
-            Assert.Contains("![Image 1](<My page_images/image-1.", markdown);
+            Assert.Contains("![Image 1](Sprint%20%234_images/image-1.", markdown);
             Assert.DoesNotContain("Image References", markdown);
 
-            var image = Assert.Single(Directory.GetFiles(Path.Combine(folder, "My page_images"), "image-1.*"));
+            var image = Assert.Single(Directory.GetFiles(Path.Combine(folder, "Sprint #4_images"), "image-1.*"));
             Assert.StartsWith("image/", Images.MimeType(File.ReadAllBytes(image)));
         }
         finally

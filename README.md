@@ -23,7 +23,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown. |
 | `onenote_delete_page` | Moves a page to Deleted Pages. Subpages stay. |
 
-`onenote_get_page`, `onenote_get_page_by_link`, and `onenote_get_page_raw` save to `outputPath`, an absolute file path the agent names, and return the path. The Markdown tools save images full size to a `<file name>_images` folder next to the page and link them. `inline=true` returns the page in the response instead, with `[Image N]` and callback IDs for the image tools.
+`onenote_get_page`, `onenote_get_page_by_link`, and `onenote_get_page_raw` save to `outputPath`, an absolute file path the agent names, and return the path. The Markdown tools save images full size to a folder next to the page and link them: `page.md` gets `page_images`. `inline=true` returns the page in the response instead, with `[Image N]` and callback IDs for the image tools.
 
 `onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path.
 

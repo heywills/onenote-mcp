@@ -23,8 +23,18 @@ public sealed class OneNoteClient
     public string GetPageContent(string pageId) =>
         Call(app => { app.GetPageContent(pageId, out string xml, PageInfo.piBasic, XMLSchema.xs2013); return xml; });
 
-    public byte[] GetBinaryPageContent(string pageId, string callbackId) =>
-        Call(app => { app.GetBinaryPageContent(pageId, callbackId, out string b64); return Convert.FromBase64String(b64); });
+    public byte[] GetBinaryPageContent(string pageId, string callbackId)
+    {
+        var base64 = Call(app => { app.GetBinaryPageContent(pageId, callbackId, out string b64); return b64; });
+        try
+        {
+            return Convert.FromBase64String(base64);
+        }
+        catch (Exception e) when (e is FormatException or ArgumentNullException)
+        {
+            throw new McpException("OneNote returned unreadable image data", e);
+        }
+    }
 
     public string FindPages(string query, string startNodeId = "") =>
         Call(app => { app.FindPages(startNodeId, query, out string xml, false, false, XMLSchema.xs2013); return xml; });

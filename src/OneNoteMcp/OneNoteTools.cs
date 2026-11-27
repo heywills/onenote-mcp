@@ -15,7 +15,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     private const int DefaultMaxImageKb = 512;
     private const string OutputPathDescription = "Absolute path of the file to save, such as C:\\work\\page.md. Overwrites it. Required unless inline is true.";
     private const string GetPageDescription = """
-        Save a page as Markdown to outputPath, with its images in a "<file name>_images" folder next to it, linked from the Markdown.
+        Save a page as Markdown to outputPath, with its images in a folder next to it, linked from the Markdown: page.md gets page_images.
         Or return it with inline=true, where images are listed as [Image N] with callback IDs for onenote_get_image.
         """;
 
@@ -79,9 +79,9 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         return inline ? PageText(pageId) : SavePage(pageId, outputPath);
     }
 
-    /// <summary>Saves the page as Markdown, with its images in a <c>&lt;file name&gt;_images</c> folder next to it.</summary>
+    /// <summary>Saves the page as Markdown, with its images in a folder next to it: <c>page.md</c> gets <c>page_images</c>.</summary>
     /// <remarks>
-    /// - An image OneNote hasn't downloaded stays as <c>[Image N: not downloaded]</c>, so one missing image doesn't fail the save.
+    /// - An image that can't be saved stays as text, such as <c>[Image N: not downloaded]</c>, so one image doesn't fail the save.
     /// - Images are saved full size. Saving again overwrites them.
     /// </remarks>
     private string SavePage(string pageId, string outputPath)
@@ -89,23 +89,26 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         var xml = oneNote.GetPageContent(pageId);
         var (_, images) = PageMarkdown.Convert(xml);
         var folder = Path.GetFileNameWithoutExtension(outputPath) + "_images";
-        var links = images.ToDictionary(img => img.CallbackId, img => SaveImage(pageId, img, outputPath, folder));
-        var (markdown, _) = PageMarkdown.Convert(xml, img => links[img.CallbackId] is { } link
-            ? $"![Image {img.Index}]({PageMarkdown.LinkDestination(link)})"
-            : $"[Image {img.Index}: not downloaded]");
+        var saved = images.ToDictionary(img => img.CallbackId, img => SaveImage(pageId, img, outputPath, folder));
+        var (markdown, _) = PageMarkdown.Convert(xml, img => saved[img.CallbackId].Markdown);
 
         return ToJson(new
         {
             Status = "saved",
             Path = PageFiles.Write(outputPath, markdown),
             PageId = pageId,
-            Images = links.Values.Count(l => l is not null),
-            MissingImages = links.Values.Count(l => l is null),
+            Images = saved.Values.Count(s => s.Saved),
+            MissingImages = saved.Values.Count(s => !s.Saved),
         });
     }
 
-    /// <returns>The image's path relative to the page file, or null when OneNote can't return it</returns>
-    private string? SaveImage(string pageId, ImageRef img, string outputPath, string folder)
+    /// <summary>Saves one image to the page's image folder.</summary>
+    /// <returns>The image's Markdown, and whether its file was saved</returns>
+    /// <remarks>
+    /// - The link is percent-encoded, so a page name with <c>#</c>, <c>%</c>, or spaces still links.
+    /// - A type viewers can't show is a plain link, not an embed.
+    /// </remarks>
+    private (string Markdown, bool Saved) SaveImage(string pageId, ImageRef img, string outputPath, string folder)
     {
         byte[] data;
         try
@@ -114,12 +117,22 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         }
         catch (McpException)
         {
-            return null;
+            return ($"[Image {img.Index}: not downloaded]", false);
         }
 
-        var name = $"image-{img.Index}.{Images.Extension(data)}";
-        PageFiles.Write(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outputPath))!, folder, name), data);
-        return $"{folder}/{name}";
+        var extension = Images.Extension(data);
+        var name = $"image-{img.Index}.{extension}";
+        try
+        {
+            PageFiles.Write(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outputPath))!, folder, name), data);
+        }
+        catch (McpException)
+        {
+            return ($"[Image {img.Index}: couldn't save]", false);
+        }
+
+        var link = $"{Uri.EscapeDataString(folder)}/{name}";
+        return (extension == "bin" ? $"[Image {img.Index}: unsupported type]({link})" : $"![Image {img.Index}]({link})", true);
     }
 
     private string PageText(string pageId)
@@ -234,7 +247,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     [Description("Get one image by its callback ID, so you can see it.")]
     public ContentBlock GetImage(
         [Description("The page ID")] string pageId,
-        [Description("The image's callback ID, from onenote_get_page")] string callbackId,
+        [Description("The image's callback ID, from onenote_get_page with inline=true, or onenote_get_page_images")] string callbackId,
         [Description("Maximum size in KB. Larger images are shrunk.")] int maxSizeKb = DefaultMaxImageKb) =>
         Image(pageId, callbackId, maxSizeKb);
 
