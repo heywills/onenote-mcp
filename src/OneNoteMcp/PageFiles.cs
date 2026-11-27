@@ -158,11 +158,19 @@ public static partial class PageFiles
     /// - Below a file's folder, any link is unsafe: it could lead out of the folder.
     /// - Elsewhere, such as a junctioned <c>C:\_git</c> above the folder, a link is fine when it points to a local path that isn't another link.
     /// - OneDrive placeholders are reparse points too, but have no link target, so they still load.
+    /// - Checks from the drive root down: reading a deeper path would make Windows follow a link above it, possibly to a share.
     /// </remarks>
     private static bool HasUnsafeLink(string fullPath, string? baseFolder)
     {
         var folder = baseFolder is null ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseFolder));
+        var nodes = new List<FileSystemInfo>();
         for (FileSystemInfo? node = new FileInfo(fullPath); node is not null; node = Parent(node))
+        {
+            nodes.Add(node);
+        }
+
+        nodes.Reverse();
+        foreach (var node in nodes)
         {
             if (node.LinkTarget is not { } target)
             {

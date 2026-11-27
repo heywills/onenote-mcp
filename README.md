@@ -29,7 +29,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 - From a file: only images inside the file's folder, by relative path
 - Inline: absolute paths too
 - Web URLs, network shares and mapped network drives, links that lead out of the file's folder or to a network, files over 50 MB, and other types stay links. So do all images of a file on a share.
-- An image inside a link, formatting, or a table header stays a link.
+- An image inside a heading, a link, formatting, or a table header stays a link.
 - Images over 10 MB are shrunk. Images that would push a page past 50 MB stay links.
 
 ## Requirements

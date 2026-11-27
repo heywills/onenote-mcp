@@ -247,7 +247,7 @@ public static partial class HtmlToOneNote
                 return null;
             }
 
-            // Don't read a file that can't fit: a large one shrinks to MaxEmbedKb, so it fits only when that much is left
+            // A cautious bound: with less than MaxEmbedKb left, skip files larger than what's left, even ones that might shrink to fit
             var remaining = MaxPageImageBytes - _embeddedBytes;
             var readLimit = remaining >= Images.MaxEmbedKb * 1024L ? long.MaxValue : remaining;
             if (remaining <= 0 || loadImage?.Invoke(img.GetAttribute("src") ?? "", readLimit) is not { } data

@@ -284,6 +284,24 @@ public class OutputTests
     }
 
     [Fact]
+    public void CapsConvertedImages()
+    {
+        using var bitmap = new System.Drawing.Bitmap(2700, 2700, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        var data = bitmap.LockBits(new System.Drawing.Rectangle(0, 0, 2700, 2700), System.Drawing.Imaging.ImageLockMode.WriteOnly, bitmap.PixelFormat);
+        var bytes = new byte[data.Stride * data.Height];
+        new Random(1).NextBytes(bytes);
+        System.Runtime.InteropServices.Marshal.Copy(bytes, 0, data.Scan0, bytes.Length);
+        bitmap.UnlockBits(data);
+        using var gif = new MemoryStream();
+        bitmap.Save(gif, System.Drawing.Imaging.ImageFormat.Gif);
+        Assert.True(gif.Length < Images.MaxEmbedKb * 1024, $"GIF is {gif.Length / 1024} KB");
+
+        var image = Images.ForOneNote(gif.ToArray());
+        Assert.Equal("png", image?.Format);
+        Assert.InRange(image!.Value.Data.Length, 1, Images.MaxEmbedKb * 1024);
+    }
+
+    [Fact]
     public void ConvertsImagesForOneNote()
     {
         using var bitmap = new System.Drawing.Bitmap(2, 2);

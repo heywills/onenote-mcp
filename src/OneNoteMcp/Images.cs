@@ -43,7 +43,8 @@ public static class Images
             {
                 null => null,
                 _ when data.Length > MaxEmbedKb * 1024 => (FitToSize(data, MaxEmbedKb).Data, "png"),
-                "convert" => (ToPng(data), "png"),
+                // A small palette GIF can grow into a large PNG
+                "convert" => (FitToSize(ToPng(data), MaxEmbedKb).Data, "png"),
                 _ => (data, format),
             };
         }
