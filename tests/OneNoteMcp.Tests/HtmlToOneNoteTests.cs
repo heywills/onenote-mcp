@@ -27,6 +27,10 @@ public class HtmlToOneNoteTests
         Assert.Equal(["Body"], Texts(Convert(html)));
 
     [Fact]
+    public void SkipsNonContentWithoutSplittingTheParagraph() =>
+        Assert.Equal(["Hello world"], Texts(Convert("Hello <script>x()</script>world")));
+
+    [Fact]
     public void SkipsNonContentInsideInlineText()
     {
         var page = Convert("<h1>Hi<script>track()</script></h1><p><a href=\"https://x.test\"><svg><title>Twitter</title></svg>Share</a></p>");
