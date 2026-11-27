@@ -21,6 +21,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_search_in_notebook` | Search one notebook |
 | `onenote_create_page` | New page from HTML: headings, nested lists, tables, code |
 | `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown. |
+| `onenote_delete_page` | Moves a page to Deleted Pages. Pages only. |
 
 ## Requirements
 

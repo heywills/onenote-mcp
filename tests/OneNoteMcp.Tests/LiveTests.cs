@@ -185,6 +185,24 @@ public class LiveTests
                 Assert.StartsWith($"page_id: `{targetId}`", _tools.GetPageByLink(link));
             }));
 
+    // Leaves the page in Deleted Pages: OneNote refuses to delete from there through the API
+    [LiveFact]
+    public void DeletesPagesOnly()
+    {
+        var sectionId = SectionId();
+        Assert.Contains("Not a page: Section", Assert.Throws<McpException>(() => _tools.DeletePage(sectionId)).Message);
+
+        var pageId = JsonDocument.Parse(_tools.CreatePageFromMarkdown(sectionId, "# Live delete test (in Deleted Pages)\n\nx"))
+            .RootElement.GetProperty("page_id").GetString()!;
+        Assert.Contains("moved to Deleted Pages", _tools.DeletePage(pageId));
+        Assert.DoesNotContain(pageId, _tools.ListPages(sectionId));
+
+        var deleted = System.Xml.Linq.XElement.Parse(_client.GetHierarchy("", Microsoft.Office.Interop.OneNote.HierarchyScope.hsPages))
+            .Descendants(Hierarchy.One + "Page")
+            .Last(p => (bool?)p.Attribute("isInRecycleBin") == true && (string?)p.Attribute("name") == "Live delete test (in Deleted Pages)");
+        Assert.Contains("already in Deleted Pages", Assert.Throws<McpException>(() => _tools.DeletePage((string)deleted.Attribute("ID")!)).Message);
+    }
+
     [LiveFact]
     public void ReportsOneNoteErrors()
     {
