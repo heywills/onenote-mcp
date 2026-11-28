@@ -73,7 +73,7 @@ public static partial class Hierarchy
             return null;
         }
 
-        var cleaned = words.Where(w => w != "AND" && w.Trim('-').Length > 0)
+        var cleaned = words.Where(w => w != "AND" && w.Trim('-', '+').Length > 0)
             .Select(w => w.Trim('"', '(', ')').TrimEnd('*').Trim('"', '(', ')'))
             .Where(w => w.Length > 0)
             .ToList();
@@ -81,11 +81,20 @@ public static partial class Hierarchy
         return cleaned.Count > 0 ? cleaned : null;
     }
 
-    private static bool IsSearchSyntax(string word) =>
-        word is "OR" or "NOT" || word.StartsWith('+') || (word.StartsWith('-') && word.Trim('-').Length > 0) || PropertyFilter().IsMatch(word);
+    /// <remarks>
+    /// - Checked inside parentheses and quotes, so <c>(NOT draft)</c> is syntax.
+    /// - A lone <c>-</c> or <c>+</c>, as in a copied "Mike + Nick" title, isn't.
+    /// </remarks>
+    private static bool IsSearchSyntax(string word)
+    {
+        var w = word.Trim('(', ')', '"');
+        return w is "OR" or "NOT" || IsPrefixed(w, '+') || IsPrefixed(w, '-') || PropertyFilter().IsMatch(w);
+    }
 
-    /// <summary>A Windows Search property filter, such as <c>author:x</c>. Not <c>Re:</c> or <c>1:1</c>.</summary>
-    [GeneratedRegex(@"^[A-Za-z]+:\S")]
+    private static bool IsPrefixed(string word, char prefix) => word.StartsWith(prefix) && word.Trim(prefix).Length > 0;
+
+    /// <summary>A Windows Search property filter, such as <c>author:x</c> or <c>System.Title:plan</c>. Not <c>Re:</c> or <c>1:1</c>.</summary>
+    [GeneratedRegex(@"^[A-Za-z][A-Za-z.]*:\S")]
     private static partial Regex PropertyFilter();
 
     private static bool IsDeleted(XElement section) =>

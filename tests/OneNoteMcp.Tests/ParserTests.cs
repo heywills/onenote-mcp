@@ -192,6 +192,9 @@ public class ParserTests
     [InlineData("project - plan", true)]
     [InlineData("project +plan", false)]
     [InlineData("title:plan", false)]
+    [InlineData("System.Title:plan", false)]
+    [InlineData("project (NOT draft)", false)]
+    [InlineData("(-draft) project", false)]
     [InlineData("\"\" * AND -- ()", false)]
     public void MatchesTitlesWithoutSearchSyntax(string query, bool matches) =>
         Assert.Equal(matches, Hierarchy.RankSearchResults(query, [new("p", "Project plan", "N", "S", "2026")], []).Count == 1);
@@ -199,6 +202,7 @@ public class ParserTests
     [Theory]
     [InlineData("Nick Bushnell - 1:1")]
     [InlineData("Re: Live search (deleting now)")]
+    [InlineData("Mike + Nick 1:1")]
     public void MatchesCopiedTitles(string title) =>
         Assert.Single(Hierarchy.RankSearchResults(title, [new("p", title, "N", "S", "2026")], []));
 }
