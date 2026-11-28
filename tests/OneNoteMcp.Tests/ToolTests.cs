@@ -232,6 +232,44 @@ public sealed class ToolTests : IDisposable
     }
 
     [Fact]
+    public void MovesAPageToAnotherSectionAndReturnsItsNewId()
+    {
+        var moved = false;
+        _oneNote.Hierarchy = (id, scope) => (id, scope) switch
+        {
+            ("", HierarchyScope.hsPages) => $"""
+                <one:Notebooks xmlns:one="{FakeOneNote.Ns}"><one:Notebook name="N" ID="nb">
+                  <one:Section name="From" ID="from"><one:Page ID="a" name="A" pageLevel="1"/><one:Page ID="a1" name="A1" pageLevel="2"/></one:Section>
+                  <one:Section name="To" ID="to"><one:Page ID="x" name="X" pageLevel="1"/></one:Section>
+                </one:Notebook></one:Notebooks>
+                """,
+            ("to", HierarchyScope.hsPages) => moved
+                ? $"""<one:Section xmlns:one="{FakeOneNote.Ns}" name="To" ID="to"><one:Page ID="x" name="X"/><one:Page ID="new-a" name="A"/><one:Page ID="new-a1" name="A1"/></one:Section>"""
+                : $"""<one:Section xmlns:one="{FakeOneNote.Ns}" name="To" ID="to"><one:Page ID="x" name="X" pageLevel="1"/></one:Section>""",
+            _ => throw new InvalidOperationException($"Unexpected {id} {scope}"),
+        };
+        _oneNote.HierarchyUpdate = _ => moved = true;
+
+        var result = JsonDocument.Parse(_tools.MovePage("a", "to")).RootElement;
+
+        Assert.Equal(("new-a", 1), (result.GetProperty("page_id").GetString(), result.GetProperty("subpages").GetInt32()));
+        Assert.Equal(["x", "a", "a1"], System.Xml.Linq.XElement.Parse(Assert.Single(_oneNote.HierarchyUpdates))
+            .Elements(System.Xml.Linq.XName.Get("Page", FakeOneNote.Ns)).Select(p => p.Attribute("ID")!.Value));
+    }
+
+    [Theory]
+    [InlineData("""<one:Section name="Deleted Pages" ID="from" isDeletedPages="true"><one:Page ID="a" name="A"/></one:Section><one:Section name="To" ID="to"/>""", "is in Deleted Pages")]
+    [InlineData("""<one:Section name="From" ID="from"><one:Page ID="a" name="A"/></one:Section><one:Section name="Deleted Pages" ID="to" isDeletedPages="true"/>""", "into Deleted Pages")]
+    [InlineData("""<one:Section name="From" ID="from"/>""", "Page not found")]
+    public void RefusesMovesOutOfOrIntoDeletedPages(string sections, string error)
+    {
+        _oneNote.Hierarchy = (_, _) => $"""<one:Notebooks xmlns:one="{FakeOneNote.Ns}"><one:Notebook name="N" ID="nb">{sections}</one:Notebook></one:Notebooks>""";
+
+        Assert.Contains(error, Assert.Throws<McpException>(() => _tools.MovePage("a", "to")).Message);
+        Assert.Empty(_oneNote.HierarchyUpdates);
+    }
+
+    [Fact]
     public void MovesPagesToDeletedPages()
     {
         _oneNote.Hierarchy = (_, scope) => scope == HierarchyScope.hsSelf

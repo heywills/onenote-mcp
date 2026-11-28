@@ -102,7 +102,8 @@ public static partial class Hierarchy
     [GeneratedRegex(@"^[A-Za-z][A-Za-z.]*:\S")]
     private static partial Regex PropertyFilter();
 
-    private static bool IsDeleted(XElement section) =>
+    /// <summary>Whether a section is Deleted Pages or sits in the recycle bin.</summary>
+    public static bool IsDeleted(XElement section) =>
         IsTrue(section, "isInRecycleBin") || IsTrue(section, "isDeletedPages")
         || section.Ancestors(One + "SectionGroup").Any(g => IsTrue(g, "isRecycleBin"));
 
