@@ -56,16 +56,17 @@ public class TagTests
     public void WritesASecondCheckboxAsALabel()
     {
         Assert.Equal(("[ ] ", "[Discuss with] "), PageTags.Markdown([Tag.ToDo(false), new("Discuss with", 20, 94, true)]));
-        Assert.Equal(("[ ] ", "[To Do] "), PageTags.Markdown([Tag.ToDo(false), Tag.ToDo(false)]));
+        Assert.Equal(("[ ] ", ""), PageTags.Markdown([Tag.ToDo(false), Tag.ToDo(true)]));
     }
 
     [Fact]
     public void KeepsEmptyToDosAndNestedCheckboxText()
     {
         var page = $"""
-            <one:Page xmlns:one="{One}" name="P"><one:TagDef index="0" type="0" symbol="3" name="To Do"/><one:Title/>
+            <one:Page xmlns:one="{One}" name="P"><one:TagDef index="0" type="0" symbol="3" name="To Do"/>
+              <one:TagDef index="1" type="1" symbol="13" name="Important"/><one:Title/>
               <one:Outline><one:OEChildren>
-                <one:OE><one:Tag index="0" completed="false"/><one:T></one:T></one:OE>
+                <one:OE><one:Tag index="0" completed="false"/><one:Tag index="1" completed="false"/><one:T></one:T></one:OE>
                 <one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T>a</one:T>
                   <one:OEChildren><one:OE><one:T>[ ] child</one:T></one:OE></one:OEChildren></one:OE>
                 <one:OE><one:Tag index="0" completed="true"/><one:List><one:Bullet bullet="2"/></one:List>
@@ -76,10 +77,27 @@ public class TagTests
 
         var markdown = PageMarkdown.Convert(page).Markdown;
 
-        Assert.Equal("# P\n\n- [ ]\n- a\n\n  \\[ ] child\n\n- [x]\n\n  [Image 1]", markdown);
+        // The image sits right under its checkbox, so the item stays tight
+        Assert.Equal("# P\n\n- [ ] [Important]\n- a\n\n  \\[ ] child\n\n- [x]\n  [Image 1]", markdown);
         // And it reads back with the same tags: the empty To Do, and the image's checked one
         var created = Create(MarkdownToOneNote.ToHtml(markdown[5..]), fromMarkdown: true);
         Assert.Equal(["false", "true"], created.Descendants(One + "Tag").Select(t => t.Attribute("completed")!.Value));
+    }
+
+    [Fact]
+    public void KeepsLinksLabelledX()
+    {
+        var page = $"""
+            <one:Page xmlns:one="{One}" name="P"><one:Title/><one:Outline><one:OEChildren>
+              <one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T><![CDATA[<a href="https://x.test/">x</a> marks it]]></one:T></one:OE>
+            </one:OEChildren></one:Outline></one:Page>
+            """;
+
+        var markdown = PageMarkdown.Convert(page).Markdown;
+        Assert.Equal("# P\n\n- [&#120;](https://x.test/) marks it", markdown);
+        var created = Create(MarkdownToOneNote.ToHtml(markdown[5..]), fromMarkdown: true);
+        Assert.Empty(created.Descendants(One + "Tag"));
+        Assert.Contains("<a href=\"https://x.test/\">x</a>", created.Descendants(One + "T").Single().Value);
     }
 
     [Fact]

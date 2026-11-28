@@ -201,7 +201,7 @@ public static partial class PageMarkdown
             var childIndent = listItem ? indent + new string(' ', marker!.Length) : indent;
             if (listItem && !hasText)
             {
-                ListItem(prefix, marker!, $"{tags.Box}{tags.Labels}".TrimEnd(), quote);
+                ListItem(prefix, marker!, $"{tags.Box}{tags.Labels}".TrimEnd(), quote, bare: true);
             }
 
             if (hasText)
@@ -278,7 +278,9 @@ public static partial class PageMarkdown
 
             // OneNote copies an italic style's italic onto the text, such as its own Quote, h4, and h6.
             var text = InlineMarkdown(html, (string?)oe.Attribute("style") ?? "", ignoreUniformItalic: style.Italic).Trim();
-            if (text.Length > 0)
+            var empty = text.Length == 0;
+            // A list item keeps its labels even with no text, as an empty To Do with [Important]
+            if (!empty || marker is not null)
             {
                 text = tags.Labels + text;
             }
@@ -287,7 +289,7 @@ public static partial class PageMarkdown
             if (marker is not null)
             {
                 var body = EscapeLineStart(text);
-                ListItem(prefix, marker, ((tags.Box ?? EscapeTaskMarker(body)) + body).TrimEnd(), quote);
+                ListItem(prefix, marker, (tags.Box is null ? EscapeTaskMarker(body) : tags.Box + body).TrimEnd(), quote, bare: empty);
             }
             else if (text.Length == 0)
             {
@@ -301,12 +303,18 @@ public static partial class PageMarkdown
             {
                 // Under a list item, Markdown reads a leading [ ] in any paragraph as a checkbox
                 var body = EscapeLineStart(text);
-                Paragraph(prefix, HorizontalRule().IsMatch(text) ? "---" : (indent.Length > 0 ? EscapeTaskMarker(body) : "") + body, quote);
+                Paragraph(prefix, HorizontalRule().IsMatch(text) ? "---" : indent.Length > 0 ? EscapeTaskMarker(body) : body, quote);
             }
         }
 
-        /// <summary>A backslash for text that Markdown would read as a task item's checkbox, or nothing.</summary>
-        private static string EscapeTaskMarker(string text) => TaskMarker().IsMatch(text) ? @"\" : "";
+        /// <summary>Text that Markdown would read as starting with a task item's checkbox, escaped.</summary>
+        /// <remarks>
+        /// - Markdig reads <c>[x](url)</c> as a checkbox too, so a link labelled x gets its x as an entity, which keeps the link.
+        /// </remarks>
+        private static string EscapeTaskMarker(string text) =>
+            !TaskMarker().IsMatch(text) ? text
+            : text.Length > 3 && text[3] == '(' && text[1] != ' ' ? $"[&#{(int)text[1]};]{text[3..]}"
+            : @"\" + text;
 
         /// <summary>Writes an OE's images, tables, attached files, and nested OEs.</summary>
         /// <remarks>
@@ -403,7 +411,8 @@ public static partial class PageMarkdown
             _quotePrefix = quote ? prefix : null;
         }
 
-        private void ListItem(string prefix, string marker, string text, bool quote)
+        /// <param name="bare">The text is only a checkbox or labels, with the item's content below</param>
+        private void ListItem(string prefix, string marker, string text, bool quote, bool bare = false)
         {
             var bullet = marker is "- " or "* ";
             var topLevel = prefix is "" or "> ";
@@ -436,7 +445,8 @@ public static partial class PageMarkdown
             _lines.Add((prefix + marker + text).TrimEnd());
             _kind = "list";
             _quotePrefix = quote ? prefix : null;
-            _bareMarker = text.Length == 0;
+            // A checkbox or labels alone, like no text, need the item's content on the next line
+            _bareMarker = text.Length == 0 || bare;
         }
 
         private void CodeLine(string indent, string text)
