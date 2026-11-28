@@ -53,8 +53,34 @@ public class TagTests
     }
 
     [Fact]
-    public void WritesASecondCheckboxAsALabel() =>
-        Assert.Equal("[ ] ", PageTags.Markdown([Tag.ToDo(false), new("Discuss with", 20, 94, true)]).Box);
+    public void WritesASecondCheckboxAsALabel()
+    {
+        Assert.Equal(("[ ] ", "[Discuss with] "), PageTags.Markdown([Tag.ToDo(false), new("Discuss with", 20, 94, true)]));
+        Assert.Equal(("[ ] ", "[To Do] "), PageTags.Markdown([Tag.ToDo(false), Tag.ToDo(false)]));
+    }
+
+    [Fact]
+    public void KeepsEmptyToDosAndNestedCheckboxText()
+    {
+        var page = $"""
+            <one:Page xmlns:one="{One}" name="P"><one:TagDef index="0" type="0" symbol="3" name="To Do"/><one:Title/>
+              <one:Outline><one:OEChildren>
+                <one:OE><one:Tag index="0" completed="false"/><one:T></one:T></one:OE>
+                <one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T>a</one:T>
+                  <one:OEChildren><one:OE><one:T>[ ] child</one:T></one:OE></one:OEChildren></one:OE>
+                <one:OE><one:Tag index="0" completed="true"/><one:List><one:Bullet bullet="2"/></one:List>
+                  <one:Image><one:CallbackID callbackID="cb"/></one:Image></one:OE>
+              </one:OEChildren></one:Outline>
+            </one:Page>
+            """;
+
+        var markdown = PageMarkdown.Convert(page).Markdown;
+
+        Assert.Equal("# P\n\n- [ ]\n- a\n\n  \\[ ] child\n\n- [x]\n\n  [Image 1]", markdown);
+        // And it reads back with the same tags: the empty To Do, and the image's checked one
+        var created = Create(MarkdownToOneNote.ToHtml(markdown[5..]), fromMarkdown: true);
+        Assert.Equal(["false", "true"], created.Descendants(One + "Tag").Select(t => t.Attribute("completed")!.Value));
+    }
 
     [Fact]
     public void KeepsTheDoneStateOfAnyTagInHtml()

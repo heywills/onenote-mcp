@@ -194,14 +194,14 @@ public static partial class PageMarkdown
             var prefix = QuotePrefix(quoteColumn, indent);
             var hasText = oe.Element(One + "T") is not null && oe != repeatedTitle;
             var tags = PageTags.Markdown(PageTags.Of(oe, tagDefinitions));
-            var marker = Marker(oe.Element(One + "List") ?? (IsTaskParagraph(oe, styleName, hasText, tags.Box) ? TaskBullet : null), indent, prefix, number);
+            var marker = Marker(oe.Element(One + "List") ?? (IsTaskParagraph(styleName, hasText, tags.Box) ? TaskBullet : null), indent, prefix, number);
 
             // A list item with no text, such as a bullet holding only an image, still gets its marker line.
             var listItem = marker is not null && oe != repeatedTitle;
             var childIndent = listItem ? indent + new string(' ', marker!.Length) : indent;
             if (listItem && !hasText)
             {
-                ListItem(prefix, marker!, "", quote);
+                ListItem(prefix, marker!, $"{tags.Box}{tags.Labels}".TrimEnd(), quote);
             }
 
             if (hasText)
@@ -221,13 +221,12 @@ public static partial class PageMarkdown
         /// <summary>The bullet a checkbox paragraph gets, since Markdown checkboxes live in lists</summary>
         private static readonly XElement TaskBullet = new(One + "List", new XElement(One + "Bullet"));
 
-        /// <summary>A plain paragraph with a checkbox tag, which becomes a <c>- [ ]</c> task item.</summary>
+        /// <summary>A plain paragraph with a checkbox tag, which becomes a <c>- [ ]</c> task item, even with no text.</summary>
         /// <remarks>
-        /// - Headings, code, and blank lines drop the checkbox: Markdown has no checkbox for them.
+        /// - Headings and code drop the checkbox: Markdown has no checkbox for them.
         /// </remarks>
-        private static bool IsTaskParagraph(XElement oe, string styleName, bool hasText, string? box) =>
-            box is not null && hasText && styleName != "code" && !Regex.IsMatch(styleName, "^h[1-6]$")
-            && CleanText(string.Concat(oe.Elements(One + "T").Select(t => t.Value))).Trim().Length > 0;
+        private static bool IsTaskParagraph(string styleName, bool hasText, string? box) =>
+            box is not null && hasText && styleName != "code" && !Regex.IsMatch(styleName, "^h[1-6]$");
 
         /// <summary>The indent, with <c>"> "</c> at the quote's column when quoted</summary>
         private static string QuotePrefix(string? quoteColumn, string indent) =>
@@ -288,7 +287,7 @@ public static partial class PageMarkdown
             if (marker is not null)
             {
                 var body = EscapeLineStart(text);
-                ListItem(prefix, marker, (tags.Box ?? (TaskMarker().IsMatch(body) ? @"\" : "")) + body, quote);
+                ListItem(prefix, marker, ((tags.Box ?? EscapeTaskMarker(body)) + body).TrimEnd(), quote);
             }
             else if (text.Length == 0)
             {
@@ -300,9 +299,14 @@ public static partial class PageMarkdown
             }
             else
             {
-                Paragraph(prefix, HorizontalRule().IsMatch(text) ? "---" : EscapeLineStart(text), quote);
+                // Under a list item, Markdown reads a leading [ ] in any paragraph as a checkbox
+                var body = EscapeLineStart(text);
+                Paragraph(prefix, HorizontalRule().IsMatch(text) ? "---" : (indent.Length > 0 ? EscapeTaskMarker(body) : "") + body, quote);
             }
         }
+
+        /// <summary>A backslash for text that Markdown would read as a task item's checkbox, or nothing.</summary>
+        private static string EscapeTaskMarker(string text) => TaskMarker().IsMatch(text) ? @"\" : "";
 
         /// <summary>Writes an OE's images, tables, attached files, and nested OEs.</summary>
         /// <remarks>

@@ -36,8 +36,9 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 Pages keep their OneNote tags:
 - Checkbox tags (To Do, Attendance) are task items in Markdown, `- [ ]` and `- [x]`. Creating a page from Markdown turns task items into To Do checkboxes.
 - Other tags (Important, Question) are their name in brackets, such as `[Important]`. Creating from Markdown keeps that as text.
-- HTML keeps every tag as a checkbox or label with `data-tag` attributes, so `onenote_create_page` restores them.
-- Markdown drops tags in table cells and on code lines, and checkboxes on headings.
+- HTML keeps tags as a checkbox or label with `data-tag` attributes, so `onenote_create_page` restores them.
+- Both drop tags on plain code lines. Markdown also drops tags in table cells and checkboxes on headings.
+- A bulleted To Do comes back from Markdown without its bullet: Markdown can't tell it from a To Do paragraph.
 
 `onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path. They embed local images:
 - From a file: only images inside the file's folder, by relative path

@@ -49,9 +49,10 @@ public static class PageTags
     /// </remarks>
     public static (string? Box, string Labels) Markdown(IReadOnlyList<Tag> tags)
     {
-        var box = tags.FirstOrDefault(t => t.IsCheckbox);
-        return (box is null ? null : box.Done ? "[x] " : "[ ] ",
-            string.Concat(tags.Where(t => t != box).Select(t => $"[{PageMarkdown.EscapeBracketed(t.Name)}] ")));
+        // By position: two equal checkbox tags would match by value
+        var boxAt = tags.ToList().FindIndex(t => t.IsCheckbox);
+        return (boxAt < 0 ? null : tags[boxAt].Done ? "[x] " : "[ ] ",
+            string.Concat(tags.Where((_, i) => i != boxAt).Select(t => $"[{PageMarkdown.EscapeBracketed(t.Name)}] ")));
     }
 
     /// <summary>HTML for an OE's tags, before its text.</summary>
