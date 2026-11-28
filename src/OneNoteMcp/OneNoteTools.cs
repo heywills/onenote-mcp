@@ -309,10 +309,12 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
     public string SearchInScope(
         [Description("""
             A notebook, section group, or section ID, from onenote_list_notebooks, onenote_get_notebook_tree, or onenote_list_sections.
-            Deleted Pages and the Recycle Bin return nothing, since search skips deleted pages.
+            Deleted Pages and the Recycle Bin return nothing.
             """)] string scopeId,
         [Description("Search query")] string query,
-        [Description(MaxResultsDescription)] int maxResults = DefaultMaxResults) => RunSearch(query, scopeId, maxResults);
+        [Description(MaxResultsDescription)] int maxResults = DefaultMaxResults) =>
+        // A blank scope would search every notebook, as if scoped
+        string.IsNullOrWhiteSpace(scopeId) ? throw new McpException("scopeId is empty. Use onenote_search to search all notebooks.") : RunSearch(query, scopeId, maxResults);
 
     // Write
 

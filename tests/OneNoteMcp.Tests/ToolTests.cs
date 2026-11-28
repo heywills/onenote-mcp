@@ -135,6 +135,10 @@ public sealed class ToolTests : IDisposable
     }
 
     [Fact]
+    public void RefusesABlankSearchScope() =>
+        Assert.StartsWith("scopeId is empty", Assert.Throws<McpException>(() => _tools.SearchInScope(" ", "project")).Message);
+
+    [Fact]
     public void RefusesAPageAsSearchScope()
     {
         _oneNote.Hierarchy = (id, scope) => scope == HierarchyScope.hsSelf
