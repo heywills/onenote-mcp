@@ -47,6 +47,24 @@ public class PageMoveTests
     }
 
     [Fact]
+    public void BecomesASiblingOfASubpageItFollows()
+    {
+        var source = Section(("a", 1), ("a1", 2));
+        var placed = PageMoves.Place(Section(("p", 1), ("c1", 2), ("c2", 2), ("q", 1)), PageMoves.WithSubpages(Page(source, "a")), "c1");
+
+        // c2 stays p's subpage, not a's
+        Assert.Equal(["p:1", "c1:2", "a:2", "a1:3", "c2:2", "q:1"], Order(placed));
+    }
+
+    [Fact]
+    public void RefusesSubpagesDeeperThanThreeLevels()
+    {
+        var source = Section(("a", 1), ("a1", 2), ("a1x", 3));
+        Assert.Contains("deeper than OneNote's 3 levels",
+            Assert.Throws<McpException>(() => PageMoves.Place(Section(("p", 1), ("c1", 2)), PageMoves.WithSubpages(Page(source, "a")), "c1")).Message);
+    }
+
+    [Fact]
     public void ReordersWithinASection()
     {
         var section = Section(("a", 1), ("a1", 2), ("b", 1), ("c", 1));

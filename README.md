@@ -131,7 +131,7 @@ Search matches page titles that contain every query word, then page text through
 
 ### Moving pages
 
-`onenote_move_page` moves a page and its subpages to a section in any notebook, after `afterPageId` or at the end. Pass the page's own section to reorder it. A page that changes section gets a new ID, returned in the result. Its "Copy link to page" page-id stays the same.
+`onenote_move_page` moves a page and its subpages to a section in any notebook, at the end or after `afterPageId` as that page's sibling. Pass the page's own section to reorder it. Pages that change section get new IDs, and the result lists each old and new ID. Their "Copy link to page" page-id stays the same.
 
 ### Deleting pages
 

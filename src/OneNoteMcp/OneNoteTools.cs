@@ -391,45 +391,16 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
         return ToJson(new { Status = "moved to Deleted Pages", Title = (string?)page.Attribute("name") });
     }
 
-    [McpServerTool(Name = "onenote_move_page", Destructive = false, Idempotent = false)]
+    [McpServerTool(Name = "onenote_move_page", Destructive = true, Idempotent = false)]
     [Description("""
         Move a page and its subpages to a section in any notebook, or to another place in its own section.
-        A page that changes section gets a new ID: use the page_id in the result. Its "Copy link to page" page-id stays the same.
+        Pages that change section get new IDs: use the page_id and moved list in the result. Their "Copy link to page" page-id stays the same.
         """)]
     public string MovePage(
         [Description("The page ID")] string pageId,
         [Description("The target section ID, from onenote_list_sections. The page's own section to reorder it.")] string sectionId,
-        [Description("A page in the target section to place it after, with that page's subpages. Empty for the end of the section.")] string afterPageId = "")
-    {
-        var all = XElement.Parse(oneNote.GetHierarchy("", HierarchyScope.hsPages));
-        var page = all.Descendants(One + "Page").FirstOrDefault(p => PageMoves.Id(p) == pageId)
-            ?? throw new McpException("Page not found. Is its notebook open in OneNote desktop?");
-        var target = all.Descendants(One + "Section").FirstOrDefault(s => PageMoves.Id(s) == sectionId)
-            ?? throw new McpException("Section not found. Use a section ID from onenote_list_sections.");
-        if (IsDeleted(page.Parent!) || (string?)page.Attribute("isInRecycleBin") == "true")
-        {
-            throw new McpException("The page is in Deleted Pages, which OneNote keeps read-only");
-        }
-
-        if (IsDeleted(target))
-        {
-            throw new McpException("Can't move a page into Deleted Pages or the Recycle Bin. Use onenote_delete_page.");
-        }
-
-        var moving = PageMoves.WithSubpages(page);
-        var section = XElement.Parse(oneNote.GetHierarchy(sectionId, HierarchyScope.hsPages));
-        var before = section.Elements(One + "Page").Select(PageMoves.Id).ToHashSet();
-        oneNote.UpdateHierarchy(PageMoves.Place(section, moving, afterPageId.Trim()).ToString(SaveOptions.DisableFormatting));
-
-        // In another section, the page gets a new ID: the first one that wasn't there
-        var newId = before.Contains(pageId) ? pageId
-            : XElement.Parse(oneNote.GetHierarchy(sectionId, HierarchyScope.hsPages)).Elements(One + "Page")
-                .Select(PageMoves.Id).FirstOrDefault(id => !before.Contains(id)) ?? pageId;
-        return ToJson(new
-        {
-            Status = "moved", PageId = newId, Title = (string?)page.Attribute("name"), Section = (string?)target.Attribute("name"), Subpages = moving.Count - 1,
-        });
-    }
+        [Description("A page in the target section to place it after, as its sibling, after that page's subpages. Empty for the end of the section.")] string afterPageId = "") =>
+        ToJson(new PageMover(oneNote).Move(pageId.Trim(), sectionId.Trim(), afterPageId.Trim()));
 
     // Helpers
 
