@@ -63,6 +63,8 @@ public static partial class HtmlToOneNote
             .GroupBy(d => (string)d.Attribute("name")!)
             .ToDictionary(g => g.Key, g => int.Parse((string)g.First().Attribute("index")!));
         var builder = new Builder(indexes, defs.Select(d => int.TryParse((string?)d.Attribute("index"), out var i) ? i : 0).DefaultIfEmpty(-1).Max() + 1, fromMarkdown, loadImage);
+        var tagDefs = page.Elements(One + "TagDef").ToList();
+        builder.UseTags(PageTags.Definitions(page));
 
         var outline = new XElement(One + "Outline");
         var children = new XElement(One + "OEChildren");
@@ -86,14 +88,7 @@ public static partial class HtmlToOneNote
             return def;
         }).ToList();
 
-        if (defs.Count > 0)
-        {
-            defs[^1].AddAfterSelf(newDefs);
-        }
-        else
-        {
-            page.AddFirst(newDefs);
-        }
+        AddDefinitions(page, tagDefs.LastOrDefault(), builder.NewTags, defs.LastOrDefault(), newDefs);
 
         // OneNote rejects an Outline with nothing in it
         if (children.HasElements)
@@ -102,6 +97,31 @@ public static partial class HtmlToOneNote
         }
 
         return (builder.Embedded, builder.Linked);
+    }
+
+    /// <summary>Adds new TagDefs and QuickStyleDefs in schema order: TagDefs, then QuickStyleDefs, then the rest.</summary>
+    /// <param name="lastTag">The page's last TagDef, or null</param>
+    /// <param name="lastStyle">The page's last QuickStyleDef, or null</param>
+    private static void AddDefinitions(XElement page, XElement? lastTag, List<XElement> newTags, XElement? lastStyle, List<XElement> newStyles)
+    {
+        if ((lastStyle ?? lastTag) is { } beforeStyles)
+        {
+            beforeStyles.AddAfterSelf(newStyles);
+        }
+        else
+        {
+            page.AddFirst(newStyles);
+        }
+
+        // After the page's TagDefs, which are still ahead of every QuickStyleDef
+        if (lastTag is not null)
+        {
+            lastTag.AddAfterSelf(newTags);
+        }
+        else
+        {
+            page.AddFirst(newTags);
+        }
     }
 
     /// <summary>The document's <c>&lt;title&gt;</c>, or null when it has none.</summary>
@@ -218,6 +238,90 @@ public static partial class HtmlToOneNote
 
         /// <summary>Styles this content needs that the page doesn't have yet</summary>
         public List<(string Name, int Index)> NewStyles { get; } = [];
+
+        /// <summary>Tag definition indexes, by tag with <c>Done</c> false</summary>
+        private readonly Dictionary<Tag, int> _tagIndexes = [];
+        private int _nextTagIndex;
+
+        /// <summary>TagDefs this content needs that the page doesn't have yet</summary>
+        public List<XElement> NewTags { get; } = [];
+
+        /// <summary>Reuses the page's tag definitions, by index.</summary>
+        public void UseTags(Dictionary<string, Tag> definitions)
+        {
+            foreach (var (index, tag) in definitions)
+            {
+                if (int.TryParse(index, out var i))
+                {
+                    _tagIndexes.TryAdd(tag, i);
+                    _nextTagIndex = Math.Max(_nextTagIndex, i + 1);
+                }
+            }
+        }
+
+        private int TagIndex(Tag tag)
+        {
+            var key = tag with { Done = false };
+            if (!_tagIndexes.TryGetValue(key, out var index))
+            {
+                index = _tagIndexes[key] = _nextTagIndex++;
+                NewTags.Add(PageTags.Definition(key, index));
+            }
+
+            return index;
+        }
+
+        /// <summary>Removes the tag checkboxes and labels at the start of a block, and returns their tags.</summary>
+        /// <remarks>
+        /// - onenote_get_page's HTML marks each with <c>data-tag</c>. A Markdown task item's checkbox has none, and is a To Do.
+        /// - Other HTML's checkboxes without <c>data-tag</c> aren't tags.
+        /// </remarks>
+        private List<Tag> TakeTags(IElement block)
+        {
+            var tags = new List<Tag>();
+            foreach (var node in block.ChildNodes.ToList())
+            {
+                if (node is IText text && string.IsNullOrWhiteSpace(text.Data))
+                {
+                    continue;
+                }
+
+                if (node is not IElement e || TagOf(e) is not { } tag)
+                {
+                    break;
+                }
+
+                tags.Add(tag);
+                e.Remove();
+            }
+
+            return tags;
+        }
+
+        private Tag? TagOf(IElement e) => e.LocalName switch
+        {
+            "input" when string.Equals(e.GetAttribute("type"), "checkbox", StringComparison.OrdinalIgnoreCase) && e.HasAttribute("data-tag") =>
+                DataTag(e, e.HasAttribute("checked"), Tag.ToDo(false)),
+            "input" when string.Equals(e.GetAttribute("type"), "checkbox", StringComparison.OrdinalIgnoreCase) && fromMarkdown =>
+                Tag.ToDo(e.HasAttribute("checked")),
+            "span" when e.HasAttribute("data-tag") => DataTag(e, e.GetAttribute("data-tag-done") == "true", new Tag("Tag", 0, 0, false)),
+            _ => null,
+        };
+
+        /// <param name="fallback">The type and symbol when the attributes are missing</param>
+        private static Tag DataTag(IElement e, bool done, Tag fallback) => new(
+            e.GetAttribute("data-tag") is { Length: > 0 } name ? name : fallback.Name,
+            int.TryParse(e.GetAttribute("data-tag-type"), out var type) ? type : fallback.Type,
+            int.TryParse(e.GetAttribute("data-tag-symbol"), out var symbol) ? symbol : fallback.Symbol,
+            done);
+
+        private void AddTags(XElement? oe, List<Tag> tags)
+        {
+            if (oe is not null && tags.Count > 0)
+            {
+                PageTags.Add(oe, tags, TagIndex);
+            }
+        }
 
         private int StyleIndex(string name)
         {
@@ -348,7 +452,10 @@ public static partial class HtmlToOneNote
                         Oe(parent, "");
                     }
 
-                    ParagraphFormat(Oe(parent, InlineHtml(e.ChildNodes, imageLinked: CountLink), style: StyleIndex(e.LocalName)), e);
+                    var headingTags = TakeTags(e);
+                    var heading = Oe(parent, InlineHtml(e.ChildNodes, imageLinked: CountLink), style: StyleIndex(e.LocalName));
+                    ParagraphFormat(heading, e);
+                    AddTags(heading, headingTags);
                     break;
                 case "blockquote":
                     Quote(e, parent);
@@ -396,6 +503,7 @@ public static partial class HtmlToOneNote
                 return;
             }
 
+            var tags = TakeTags(e);
             var before = parent.Elements(One + "OE").Count();
             Blocks(e.ChildNodes, parent);
             var added = parent.Elements(One + "OE").Skip(before).ToList();
@@ -408,6 +516,8 @@ public static partial class HtmlToOneNote
             {
                 ParagraphFormat(oe, e);
             }
+
+            AddTags(added.FirstOrDefault(), tags);
         }
 
         /// <summary>Copies a block element's font, color, and alignment to its OE.</summary>
@@ -500,6 +610,15 @@ public static partial class HtmlToOneNote
         /// </remarks>
         private void ListItem(IElement li, XElement parent, string listKind, (int Value, string Format) number)
         {
+            // A loose item's checkbox sits in its first paragraph, with no item text before it
+            var tags = TakeTags(li);
+            if (tags.Count == 0 && li.FirstElementChild is { LocalName: "p" } first && string.IsNullOrWhiteSpace(InlineHtml(li.ChildNodes.Where(IsInlineNode))))
+            {
+                tags = TakeTags(first);
+            }
+
+            // A Markdown task item in a bulleted list is a checkbox paragraph, the usual OneNote To Do
+            string? kind = fromMarkdown && listKind == "ul" && tags.Any(t => t.IsCheckbox) ? null : listKind;
             var inline = li.ChildNodes.Where(IsInlineNode).ToList();
             var nested = li.ChildNodes.Where(c => !IsInlineNode(c)).ToList();
 
@@ -515,9 +634,10 @@ public static partial class HtmlToOneNote
             var imageOnly = images.Count > 0 && string.IsNullOrWhiteSpace(InlineHtml(inline));
             var style = _inQuote ? StyleIndex("blockquote") : (int?)null;
             var oe = imageOnly
-                ? Oe(parent, "", style: style, listKind: listKind, number: number, content: images[0].Image)
-                : Oe(parent, InlineHtml(inline, imageLinked: CountLink), style: style, listKind: listKind, number: number);
+                ? Oe(parent, "", style: style, listKind: kind, number: number, content: images[0].Image)
+                : Oe(parent, InlineHtml(inline, imageLinked: CountLink), style: style, listKind: kind, number: number);
             ParagraphFormat(oe, li);
+            AddTags(oe, tags);
 
             var children = new XElement(One + "OEChildren");
             foreach (var (_, image) in images.Skip(imageOnly ? 1 : 0))

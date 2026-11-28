@@ -30,7 +30,7 @@ public static partial class PageMarkdown
     {
         var root = XElement.Parse(xml);
         var (title, styles, repeatedTitle) = Parts(root);
-        var writer = new Writer(styles, repeatedTitle, imageMarkdown ?? (img => $"[Image {img.Index}]"));
+        var writer = new Writer(styles, repeatedTitle, imageMarkdown ?? (img => $"[Image {img.Index}]"), PageTags.Definitions(root));
         foreach (var outline in root.Descendants(One + "Outline"))
         {
             writer.NewOutline();
@@ -129,7 +129,9 @@ public static partial class PageMarkdown
     public static string CleanText(string text) =>
         System.Net.WebUtility.HtmlDecode(Tags().Replace(text, "")).Replace('\u00A0', ' ');
 
-    private sealed class Writer(Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle, Func<ImageRef, string> imageMarkdown)
+    /// <param name="tagDefinitions">The page's tags by index</param>
+    private sealed class Writer(
+        Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle, Func<ImageRef, string> imageMarkdown, Dictionary<string, Tag> tagDefinitions)
     {
         private readonly List<string> _lines = [];
         private string _kind = "";
@@ -190,20 +192,21 @@ public static partial class PageMarkdown
 
             var quote = quoteColumn is not null;
             var prefix = QuotePrefix(quoteColumn, indent);
-            var marker = Marker(oe.Element(One + "List"), indent, prefix, number);
             var hasText = oe.Element(One + "T") is not null && oe != repeatedTitle;
+            var tags = PageTags.Markdown(PageTags.Of(oe, tagDefinitions));
+            var marker = Marker(oe.Element(One + "List") ?? (IsTaskParagraph(styleName, hasText, tags.Box) ? TaskBullet : null), indent, prefix, number);
 
             // A list item with no text, such as a bullet holding only an image, still gets its marker line.
             var listItem = marker is not null && oe != repeatedTitle;
             var childIndent = listItem ? indent + new string(' ', marker!.Length) : indent;
             if (listItem && !hasText)
             {
-                ListItem(prefix, marker!, "", quote);
+                ListItem(prefix, marker!, $"{tags.Box}{EscapeTaskMarker(tags.Labels)}".TrimEnd(), quote);
             }
 
             if (hasText)
             {
-                Text(oe, (styleName, styleItalic), indent, prefix, marker, quote);
+                Text(oe, (styleName, styleItalic), indent, prefix, marker, quote, tags);
             }
 
             Children(oe, childIndent, quoteColumn);
@@ -214,6 +217,16 @@ public static partial class PageMarkdown
                 _bareMarker = false;
             }
         }
+
+        /// <summary>The bullet a checkbox paragraph gets, since Markdown checkboxes live in lists</summary>
+        private static readonly XElement TaskBullet = new(One + "List", new XElement(One + "Bullet"));
+
+        /// <summary>A plain paragraph with a checkbox tag, which becomes a <c>- [ ]</c> task item, even with no text.</summary>
+        /// <remarks>
+        /// - Headings and code drop the checkbox: Markdown has no checkbox for them.
+        /// </remarks>
+        private static bool IsTaskParagraph(string styleName, bool hasText, string? box) =>
+            box is not null && hasText && styleName != "code" && !Regex.IsMatch(styleName, "^h[1-6]$");
 
         /// <summary>The indent, with <c>"> "</c> at the quote's column when quoted</summary>
         private static string QuotePrefix(string? quoteColumn, string indent) =>
@@ -248,7 +261,13 @@ public static partial class PageMarkdown
             return digits + (alt ? ") " : ". ");
         }
 
-        private void Text(XElement oe, (string Name, bool Italic) style, string indent, string prefix, string? marker, bool quote)
+        /// <param name="tags">The OE's checkbox and marker labels, from <see cref="PageTags.Markdown"/></param>
+        /// <remarks>
+        /// - A checkbox makes a task item. A plain paragraph with one already has a bullet marker, from <see cref="IsTaskParagraph"/>.
+        /// - Code lines and blank lines drop their tags, and headings drop the checkbox.
+        /// - Item text that starts with <c>[ ]</c> or <c>[x]</c> is escaped, even after a checkbox, or Markdig would read another checkbox.
+        /// </remarks>
+        private void Text(XElement oe, (string Name, bool Italic) style, string indent, string prefix, string? marker, bool quote, (string? Box, string Labels) tags)
         {
             var html = OeHtml(oe);
             if (style.Name == "code" && marker is null)
@@ -259,10 +278,17 @@ public static partial class PageMarkdown
 
             // OneNote copies an italic style's italic onto the text, such as its own Quote, h4, and h6.
             var text = InlineMarkdown(html, (string?)oe.Attribute("style") ?? "", ignoreUniformItalic: style.Italic).Trim();
+            // A list item keeps its labels even with no text, as an empty To Do with [Important]
+            if (text.Length > 0 || marker is not null)
+            {
+                text = tags.Labels + text;
+            }
+
             var heading = Regex.Match(style.Name, "^h([1-6])$");
             if (marker is not null)
             {
-                ListItem(prefix, marker, EscapeLineStart(text), quote);
+                var body = EscapeLineStart(text);
+                ListItem(prefix, marker, (tags.Box + EscapeTaskMarker(body)).TrimEnd(), quote);
             }
             else if (text.Length == 0)
             {
@@ -274,9 +300,20 @@ public static partial class PageMarkdown
             }
             else
             {
-                Paragraph(prefix, HorizontalRule().IsMatch(text) ? "---" : EscapeLineStart(text), quote);
+                // Under a list item, Markdown reads a leading [ ] in any paragraph as a checkbox
+                var body = EscapeLineStart(text);
+                Paragraph(prefix, HorizontalRule().IsMatch(text) ? "---" : indent.Length > 0 ? EscapeTaskMarker(body) : body, quote);
             }
         }
+
+        /// <summary>Text that Markdown would read as starting with a task item's checkbox, escaped.</summary>
+        /// <remarks>
+        /// - Markdig reads <c>[x](url)</c> as a checkbox too, so a link labelled x or a space gets that label as an entity, which keeps the link.
+        /// </remarks>
+        private static string EscapeTaskMarker(string text) =>
+            !TaskMarker().IsMatch(text) ? text
+            : text.Length > 3 && text[3] == '(' ? $"[&#{(int)text[1]};]{text[3..]}"
+            : @"\" + text;
 
         /// <summary>Writes an OE's images, tables, attached files, and nested OEs.</summary>
         /// <remarks>
@@ -977,4 +1014,8 @@ public static partial class PageMarkdown
     /// <summary>OneNote's number text: <c>1.</c> or <c>1)</c></summary>
     [GeneratedRegex(@"^(\d+)[.)]$")]
     private static partial Regex NumberMarker();
+
+    /// <summary>Text that Markdown would read as a task item's checkbox</summary>
+    [GeneratedRegex(@"^\[[ xX]\]")]
+    private static partial Regex TaskMarker();
 }
