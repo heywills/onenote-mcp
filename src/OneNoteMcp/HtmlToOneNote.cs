@@ -770,7 +770,7 @@ public static partial class HtmlToOneNote
         value is not null && value.EndsWith("pt", StringComparison.OrdinalIgnoreCase)
         && double.TryParse(value[..^2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var points)
         && double.IsFinite(points) && Math.Abs(points) <= 1_000_000
-            ? Math.Round(points, 2) + 0.0 // rounded as written, and -0 made 0
+            ? Math.Round(points, 2, MidpointRounding.AwayFromZero) + 0.0 // rounded as written, and -0 made 0
             : null;
 
     private static string Format(double points) => points.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);

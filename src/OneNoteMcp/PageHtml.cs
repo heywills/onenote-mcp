@@ -26,7 +26,7 @@ public static class PageHtml
         var writer = new Writer(styles, repeatedTitle, imageHtml ?? (img => ImageTag(img, null)), PageTags.Definitions(root));
         var outlines = root.Descendants(One + "Outline").ToList();
         // A single outline flows as the page. Several with content keep their places, so a note stays beside its text.
-        var placed = outlines.Count(HasContent) > 1;
+        var placed = outlines.Count(o => HasContent(o, repeatedTitle)) > 1;
         foreach (var outline in outlines)
         {
             Place(writer, outline, placed, () =>
@@ -97,16 +97,19 @@ public static class PageHtml
         return $"position:absolute;left:{Points(x)};top:{Points(y)}{width}{z}";
     }
 
-    /// <summary>Whether an outline holds text, an image, a table, or a file. A click on the canvas can leave an empty one behind.</summary>
-    private static bool HasContent(XElement outline) =>
-        outline.Descendants().Any(e => e.Name.LocalName is "Image" or "Table" or "InsertedFile")
-        || outline.Descendants(One + "T").Any(t => !string.IsNullOrWhiteSpace(PageMarkdown.CleanText(t.Value)));
+    /// <summary>Whether an outline holds text, a tag, an image, a table, or a file. A click on the canvas can leave an empty one behind.</summary>
+    /// <param name="repeatedTitle">The first line when it only repeats the title, which the writer skips</param>
+    private static bool HasContent(XElement outline, XElement? repeatedTitle) =>
+        outline.Descendants().Any(e => e.Name.LocalName is "Image" or "Table" or "InsertedFile" or "MediaFile" or "Tag")
+        || outline.Descendants(One + "T").Any(t => t.Parent != repeatedTitle && !string.IsNullOrWhiteSpace(PageMarkdown.CleanText(t.Value)));
 
     /// <summary>The ID the image tools fetch an image by, or null when OneNote gave none.</summary>
     private static string? CallbackId(XElement img) =>
         (string?)img.Element(One + "CallbackID")?.Attribute("callbackID") ?? (string?)img.Attribute("callbackID");
 
-    private static string Points(double value) => $"{value.ToString("0.##", CultureInfo.InvariantCulture)}pt";
+    // Rounded first, so a tiny negative value writes 0, not -0
+    private static string Points(double value) =>
+        $"{(Math.Round(value, 2, MidpointRounding.AwayFromZero) + 0.0).ToString("0.##", CultureInfo.InvariantCulture)}pt";
 
     private static double? ToDouble(XAttribute? a) =>
         double.TryParse((string?)a, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : null;

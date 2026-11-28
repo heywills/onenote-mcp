@@ -168,6 +168,19 @@ public class PageHtmlTests
     }
 
     [Fact]
+    public void PlacesACheckboxOnlyNote()
+    {
+        var html = PageHtml.Convert($"""
+            <one:Page xmlns:one="{One}" name="P"><one:TagDef index="0" type="0" symbol="3" name="To Do"/><one:Title/>
+              <one:Outline><one:Position x="36" y="86" z="0"/><one:OEChildren><one:OE><one:T>Text</one:T></one:OE></one:OEChildren></one:Outline>
+              <one:Outline><one:Position x="-0.001" y="86" z="1"/><one:OEChildren><one:OE><one:Tag index="0" completed="false"/><one:T></one:T></one:OE></one:OEChildren></one:Outline>
+            </one:Page>
+            """).Html;
+
+        Assert.Contains("<div class=\"outline\" style=\"position:absolute;left:0pt;top:86pt;z-index:1\">", html);
+    }
+
+    [Fact]
     public void FlowsAPageWithOneOutlineOfText()
     {
         // Empty outlines, even with a blank line, and a page-level image without an ID, don't make it a placed page
