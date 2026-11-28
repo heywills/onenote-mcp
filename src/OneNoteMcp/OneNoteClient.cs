@@ -17,12 +17,15 @@ public sealed class OneNoteClient : IOneNoteClient
     private readonly Lock _lock = new();
     private Application2Class? _app;
 
+    /// <inheritdoc/>
     public string GetHierarchy(string startNodeId, HierarchyScope scope) =>
         Call(app => { app.GetHierarchy(startNodeId, scope, out string xml, XMLSchema.xs2013); return xml; });
 
+    /// <inheritdoc/>
     public string GetPageContent(string pageId) =>
         Call(app => { app.GetPageContent(pageId, out string xml, PageInfo.piBasic, XMLSchema.xs2013); return xml; });
 
+    /// <inheritdoc/>
     public byte[] GetBinaryPageContent(string pageId, string callbackId)
     {
         var base64 = Call(app => { app.GetBinaryPageContent(pageId, callbackId, out string b64); return b64; });
@@ -40,18 +43,23 @@ public sealed class OneNoteClient : IOneNoteClient
         return data.Length > 0 ? data : throw new McpException("OneNote returned no image data. It may not be downloaded yet.");
     }
 
+    /// <inheritdoc/>
     public string FindPages(string query, string startNodeId = "") =>
         Call(app => { app.FindPages(startNodeId, query, out string xml, false, false, XMLSchema.xs2013); return xml; });
 
+    /// <inheritdoc/>
     public string GetHyperlink(string objectId) =>
         Call(app => { app.GetHyperlinkToObject(objectId, "", out string link); return link; });
 
+    /// <inheritdoc/>
     public string CreateNewPage(string sectionId) =>
         Call(app => { app.CreateNewPage(sectionId, out string pageId, NewPageStyle.npsBlankPageWithTitle); return pageId; });
 
+    /// <inheritdoc/>
     public void UpdatePageContent(string xml) =>
         Call(app => { app.UpdatePageContent(xml, DateTime.MinValue, XMLSchema.xs2013, false); return 0; });
 
+    /// <inheritdoc/>
     public void DeleteHierarchy(string objectId, bool permanently = false) =>
         Call(app => { app.DeleteHierarchy(objectId, DateTime.MinValue, permanently); return 0; });
 

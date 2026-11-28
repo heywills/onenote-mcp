@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Office.Interop.OneNote;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 
 namespace OneNoteMcp.Tests;
 
@@ -45,6 +46,19 @@ public sealed class ToolTests : IDisposable
         _oneNote.Delete = (_, _) => throw new McpException("Delete failed");
 
         Assert.Equal("Update failed", Assert.Throws<McpException>(() => _tools.CreatePage("section", "T", "<p>x</p>")).Message);
+        Assert.Equal([("new", true)], _oneNote.Deleted);
+    }
+
+    [Fact]
+    public void CreatesATitleOnlyPage()
+    {
+        _oneNote.NewPage = _ => "new";
+        _oneNote.PageContent = _ => FakeOneNote.Page();
+
+        Assert.Contains("\"page_id\": \"new\"", _tools.CreatePage("section", "Q&A"));
+        var page = System.Xml.Linq.XElement.Parse(Assert.Single(_oneNote.Updated));
+        Assert.Equal("Q&amp;A", page.Element(System.Xml.Linq.XName.Get("Title", FakeOneNote.Ns))!.Value);
+        Assert.Empty(_oneNote.Deleted);
     }
 
     [Fact]
@@ -101,15 +115,62 @@ public sealed class ToolTests : IDisposable
         Assert.Equal(["title"], Ids(found));
     }
 
-    [Theory]
-    [InlineData("project")] // both fail
-    [InlineData("project OR plan")] // text search only, so nothing to fall back on
-    public void FailsWhenNoSearchWorks(string query)
+    [Fact]
+    public void FailsWhenNoSearchWorks()
     {
         _oneNote.Hierarchy = (_, _) => throw new McpException("Notebook offline");
         _oneNote.Find = (_, _) => throw new McpException("Windows Search is off");
 
-        Assert.Equal("Windows Search is off", Assert.Throws<McpException>(() => _tools.Search(query)).Message);
+        Assert.Equal("Windows Search is off", Assert.Throws<McpException>(() => _tools.Search("project")).Message);
+    }
+
+    // Text search only, so there's no page listing and nothing to fall back on
+    [Fact]
+    public void FailsWhenWindowsSearchFailsForAnOperatorQuery()
+    {
+        _oneNote.Find = (_, _) => throw new McpException("Windows Search is off");
+
+        Assert.Equal("Windows Search is off", Assert.Throws<McpException>(() => _tools.Search("project OR plan")).Message);
+    }
+
+    [Fact]
+    public void FindsALinkedPageInALaterSection()
+    {
+        _oneNote.Hierarchy = (id, scope) => scope == HierarchyScope.hsSections ? Sections("s1", "s2") : Pages((id + "-page", "P"));
+        _oneNote.Hyperlink = id => PageLink(id == "s2-page" ? Target : Other);
+        _oneNote.PageContent = _ => FakeOneNote.Page();
+
+        Assert.StartsWith("page_id: `s2-page`", _tools.GetPageByLink(Link, inline: true));
+    }
+
+    [Fact]
+    public void ReportsALinkedPageItCantFind()
+    {
+        _oneNote.Hierarchy = (id, scope) => scope == HierarchyScope.hsSections ? Sections("s1", "s2") : Pages((id + "-page", "P"));
+        _oneNote.Hyperlink = _ => PageLink(Other);
+
+        Assert.Contains("Page not found in its section (s1, s2)", Assert.Throws<McpException>(() => _tools.GetPageByLink(Link, inline: true)).Message);
+    }
+
+    [Fact]
+    public void ListsImageCallbackIdsInline()
+    {
+        _oneNote.PageContent = _ => FakeOneNote.Page(Image("cb1"));
+
+        Assert.EndsWith("**Image References:**\n- [Image 1]: callback_id=`cb1`\n", _tools.GetPage("page", inline: true));
+    }
+
+    [Fact]
+    public void ReturnsTheImagesItCanRead()
+    {
+        _oneNote.PageContent = _ => FakeOneNote.Page(Image("cb1") + Image("cb2"));
+        _oneNote.Image = (_, id) => id == "cb1" ? throw new McpException("Not downloaded") : PngImage();
+
+        var blocks = _tools.GetPageImages("page").ToList();
+
+        Assert.Equal(["[Image 1] Error: Not downloaded", "[Image 2] (callback_id: cb2)"],
+            blocks.OfType<TextContentBlock>().Select(b => b.Text));
+        Assert.IsType<ImageContentBlock>(blocks[^1]);
     }
 
     [Theory]
@@ -131,6 +192,28 @@ public sealed class ToolTests : IDisposable
 
         Assert.Contains("moved to Deleted Pages", _tools.DeletePage("x"));
         Assert.Equal([("x", false)], _oneNote.Deleted);
+    }
+
+    private const string SectionPath = "https://x.test/Notes/S.one";
+    private const string Target = "11111111-2222-3333-4444-555555555555";
+    private const string Other = "66666666-7777-8888-9999-000000000000";
+    private static readonly string Link = PageLink(Target);
+
+    private static string PageLink(string pageGuid) => $"onenote:{SectionPath}#P&section-id={{{Other}}}&page-id={{{pageGuid}}}&end";
+
+    private static string Sections(params string[] ids) => $"""
+        <one:Notebooks xmlns:one="{FakeOneNote.Ns}"><one:Notebook name="N" ID="nb">
+        {string.Concat(ids.Select(id => $"""<one:Section name="S" ID="{id}" path="{SectionPath}"/>"""))}
+        </one:Notebook></one:Notebooks>
+        """;
+
+    /// <summary>A real 1x1 PNG, which the image tools can decode.</summary>
+    private static byte[] PngImage()
+    {
+        using var bitmap = new System.Drawing.Bitmap(1, 1);
+        using var stream = new MemoryStream();
+        bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+        return stream.ToArray();
     }
 
     private static string Image(string callbackId) =>
