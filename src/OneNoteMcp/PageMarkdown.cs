@@ -7,7 +7,9 @@ using static OneNoteMcp.Hierarchy;
 
 namespace OneNoteMcp;
 
-public sealed record ImageRef(string CallbackId, int Index, double? Width, double? Height);
+/// <summary>An image on a page.</summary>
+/// <param name="Text">The text OneNote recognized in the image, on one line. Null when there's none.</param>
+public sealed record ImageRef(string CallbackId, int Index, double? Width, double? Height, string? Text = null);
 
 /// <summary>
 /// Converts OneNote page XML to Markdown plus image references.
@@ -79,9 +81,47 @@ public static partial class PageMarkdown
         return extension == "bin" ? $"[Image {index}: unsupported type]({link})" : $"![Image {index}]({link})";
     }
 
-    /// <summary>Markdown for an image that couldn't be saved, with the reason as plain text on one line.</summary>
-    public static string ImageProblem(int index, string reason) =>
-        $"[Image {index}: {Escape(Whitespace().Replace(reason, " ").Trim().Replace(']', ')'))}]";
+    /// <summary>Markdown for an image that couldn't be saved, with the reason and the image's text as plain text on one line.</summary>
+    public static string ImageProblem(int index, string reason, string? text = null) =>
+        $"[Image {index}: {EscapeBracketed(ProblemText(reason, text))}]";
+
+    /// <summary>Text escaped to sit inside <c>[...]</c>, where a <c>]</c> would end it.</summary>
+    internal static string EscapeBracketed(string text) => Escape(text).Replace("]", @"\]");
+
+    /// <summary>Why an image is missing, on one line, plus the text OneNote recognized in it.</summary>
+    /// <remarks>
+    /// - OneNote can keep an image's text without the image, as on older cloud notebooks, so the text is often all an agent gets.
+    /// </remarks>
+    internal static string ProblemText(string reason, string? text)
+    {
+        var line = Whitespace().Replace(reason, " ").Trim();
+        if (text is null)
+        {
+            return line;
+        }
+
+        var lead = line.Length == 0 ? "" : line.EndsWith('.') || line.EndsWith('?') || line.EndsWith('!') || line.EndsWith('…') || line.EndsWith(')') ? $"{line} " : $"{line}. ";
+        return $"{lead}Text in image: \"{text}\"";
+    }
+
+    /// <summary>The most characters of an image's text that outputs carry</summary>
+    private const int MaxImageText = 500;
+
+    /// <summary>The text OneNote recognized in an image: one line, up to <see cref="MaxImageText"/> characters, with double quotes made single. Null when there's none.</summary>
+    /// <remarks>
+    /// - Only images that can't be returned carry it, and the inline image list. Saved images keep "Image N" as alt text, so round trips don't change when OneNote reads an image again.
+    /// - Single quotes keep the text's end clear inside <c>"..."</c>.
+    /// </remarks>
+    internal static string? ImageText(XElement img)
+    {
+        if (img.Element(One + "OCRData")?.Element(One + "OCRText")?.Value is not { } text
+            || Whitespace().Replace(text, " ").Trim().Replace('"', '\'') is not { Length: > 0 } line)
+        {
+            return null;
+        }
+
+        return line.Length > MaxImageText ? $"{line[..MaxImageText].TrimEnd()}…" : line;
+    }
 
     /// <summary>
     /// Strips the inline HTML OneNote keeps inside text elements.
@@ -280,7 +320,7 @@ public static partial class PageMarkdown
             if (reference is null)
             {
                 var size = img.Element(One + "Size");
-                reference = new ImageRef(id, Images.Count + 1, ToDouble(size?.Attribute("width")), ToDouble(size?.Attribute("height")));
+                reference = new ImageRef(id, Images.Count + 1, ToDouble(size?.Attribute("width")), ToDouble(size?.Attribute("height")), ImageText(img));
                 Images.Add(reference);
             }
 
