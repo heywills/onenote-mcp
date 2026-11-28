@@ -31,6 +31,9 @@ public static partial class Hierarchy
             ParseSections(nb), ParseSectionGroups(nb))).ToList();
 
     /// <summary>The pages in hierarchy or <c>FindPages</c> XML, without those in Deleted Pages or the recycle bin.</summary>
+    /// <remarks>
+    /// - XML scoped to a section or group has no notebook element, so its results have an empty notebook name.
+    /// </remarks>
     public static IReadOnlyList<SearchResult> ParseSearchResults(string xml) =>
         AsNotebooks(XElement.Parse(xml)).Elements(One + "Notebook")
             .SelectMany(nb => nb.Descendants(One + "Section").Where(sec => !IsDeleted(sec)).SelectMany(sec => sec.Elements(One + "Page")

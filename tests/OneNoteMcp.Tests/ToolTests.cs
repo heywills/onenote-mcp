@@ -117,6 +117,37 @@ public sealed class ToolTests : IDisposable
         Assert.Equal(["title"], Ids(found));
     }
 
+    [Theory]
+    [InlineData("s1", """<one:Section xmlns:one="{0}" name="S" ID="s1">{1}</one:Section>""")]
+    [InlineData("g1", """<one:SectionGroup xmlns:one="{0}" name="G" ID="g1"><one:Section name="S" ID="s1">{1}</one:Section></one:SectionGroup>""")]
+    public void SearchesASectionOrGroupAndNamesItsNotebook(string scope, string scoped)
+    {
+        const string page = """<one:Page ID="p" name="Project plan" lastModifiedTime="2026-01-01T00:00:00.000Z"/>""";
+        var xml = string.Format(scoped, FakeOneNote.Ns, page);
+        _oneNote.Hierarchy = (id, kind) => kind == HierarchyScope.hsSections
+            ? $"""<one:Notebooks xmlns:one="{FakeOneNote.Ns}"><one:Notebook name="Work" ID="nb">{string.Format(scoped, FakeOneNote.Ns, "")}</one:Notebook></one:Notebooks>"""
+            : id == scope ? xml : throw new InvalidOperationException($"Listed {id}, expected {scope}");
+        _oneNote.Find = (_, id) => id == scope ? xml : throw new InvalidOperationException($"Searched {id}, expected {scope}");
+
+        var result = Assert.Single(JsonDocument.Parse(_tools.SearchInScope(scope, "project")).RootElement.GetProperty("results").EnumerateArray());
+
+        Assert.Equal(("Work", "S", true), (result.GetProperty("notebook").GetString(), result.GetProperty("section").GetString(), result.GetProperty("in_title").GetBoolean()));
+    }
+
+    [Fact]
+    public void RefusesABlankSearchScope() =>
+        Assert.StartsWith("scopeId is empty", Assert.Throws<McpException>(() => _tools.SearchInScope(" ", "project")).Message);
+
+    [Fact]
+    public void RefusesAPageAsSearchScope()
+    {
+        _oneNote.Hierarchy = (id, scope) => scope == HierarchyScope.hsSelf
+            ? $"""<one:Page xmlns:one="{FakeOneNote.Ns}" ID="{id}" name="P"/>"""
+            : throw new InvalidOperationException("Searched a page");
+
+        Assert.Equal("scopeId must be a notebook, section group, or section", Assert.Throws<McpException>(() => _tools.SearchInScope(" p ", "project")).Message);
+    }
+
     [Fact]
     public void FailsWhenNoSearchWorks()
     {
