@@ -56,7 +56,7 @@ public class TagTests
     public void WritesASecondCheckboxAsALabel()
     {
         Assert.Equal(("[ ] ", "[Discuss with] "), PageTags.Markdown([Tag.ToDo(false), new("Discuss with", 20, 94, true)]));
-        Assert.Equal(("[ ] ", ""), PageTags.Markdown([Tag.ToDo(false), Tag.ToDo(true)]));
+        Assert.Equal(("[x] ", ""), PageTags.Markdown([Tag.ToDo(false), Tag.ToDo(true)]));
     }
 
     [Fact]
@@ -71,17 +71,19 @@ public class TagTests
                   <one:OEChildren><one:OE><one:T>[ ] child</one:T></one:OE></one:OEChildren></one:OE>
                 <one:OE><one:Tag index="0" completed="true"/><one:List><one:Bullet bullet="2"/></one:List>
                   <one:Image><one:CallbackID callbackID="cb"/></one:Image></one:OE>
+                <one:OE><one:Tag index="0" completed="false"/><one:T></one:T></one:OE>
+                <one:OE><one:T>Next</one:T></one:OE>
               </one:OEChildren></one:Outline>
             </one:Page>
             """;
 
         var markdown = PageMarkdown.Convert(page).Markdown;
 
-        // The image sits right under its checkbox, so the item stays tight
-        Assert.Equal("# P\n\n- [ ] [Important]\n- a\n\n  \\[ ] child\n\n- [x]\n  [Image 1]", markdown);
-        // And it reads back with the same tags: the empty To Do, and the image's checked one
+        Assert.Equal("# P\n\n- [ ] [Important]\n- a\n\n  \\[ ] child\n\n- [x]\n\n  [Image 1]\n\n- [ ]\n\nNext", markdown);
+        // And it reads back with the same tags, and "Next" stays its own paragraph
         var created = Create(MarkdownToOneNote.ToHtml(markdown[5..]), fromMarkdown: true);
-        Assert.Equal(["false", "true"], created.Descendants(One + "Tag").Select(t => t.Attribute("completed")!.Value));
+        Assert.Equal(["false", "true", "false"], created.Descendants(One + "Tag").Select(t => t.Attribute("completed")!.Value));
+        Assert.Contains(created.Descendants(One + "OE"), o => o.Element(One + "Tag") is null && o.Element(One + "T")?.Value == "Next");
     }
 
     [Fact]
@@ -90,14 +92,16 @@ public class TagTests
         var page = $"""
             <one:Page xmlns:one="{One}" name="P"><one:Title/><one:Outline><one:OEChildren>
               <one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T><![CDATA[<a href="https://x.test/">x</a> marks it]]></one:T></one:OE>
+              <one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T><![CDATA[<a href="https://y.test/"> </a> blank]]></one:T></one:OE>
             </one:OEChildren></one:Outline></one:Page>
             """;
 
         var markdown = PageMarkdown.Convert(page).Markdown;
-        Assert.Equal("# P\n\n- [&#120;](https://x.test/) marks it", markdown);
+        // A space label is trimmed to [](url), which isn't a checkbox
+        Assert.Equal("# P\n\n- [&#120;](https://x.test/) marks it\n- [](https://y.test/) blank", markdown);
         var created = Create(MarkdownToOneNote.ToHtml(markdown[5..]), fromMarkdown: true);
         Assert.Empty(created.Descendants(One + "Tag"));
-        Assert.Contains("<a href=\"https://x.test/\">x</a>", created.Descendants(One + "T").Single().Value);
+        Assert.Equal(2, created.Descendants(One + "T").Count(t => t.Value.Contains("<a href=")));
     }
 
     [Fact]

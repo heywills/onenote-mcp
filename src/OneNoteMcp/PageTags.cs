@@ -45,13 +45,14 @@ public static class PageTags
 
     /// <summary>Markdown for an OE's tags: the checkbox (<c>[ ] </c> or <c>[x] </c>), or null, and labels for the rest, such as <c>[Important] </c>.</summary>
     /// <remarks>
-    /// - An item has one checkbox, so a different checkbox tag is a label too. A repeat of the same checkbox is dropped.
+    /// - An item has one checkbox, so a different checkbox tag is a label too. A repeat of the same checkbox is dropped, and checks the box if it's done.
     /// </remarks>
     public static (string? Box, string Labels) Markdown(IReadOnlyList<Tag> tags)
     {
-        var box = tags.FirstOrDefault(t => t.IsCheckbox);
-        var labels = tags.Where(t => box is null || (t with { Done = box.Done }) != box);
-        return (box is null ? null : box.Done ? "[x] " : "[ ] ",
+        var box = tags.FirstOrDefault(t => t.IsCheckbox) is { } first ? first with { Done = false } : null;
+        bool SameBox(Tag t) => box is not null && t with { Done = false } == box;
+        var labels = tags.Where(t => !SameBox(t));
+        return (box is null ? null : tags.Any(t => SameBox(t) && t.Done) ? "[x] " : "[ ] ",
             string.Concat(labels.Select(t => $"[{PageMarkdown.EscapeBracketed(t.Name)}] ")));
     }
 

@@ -37,7 +37,7 @@ Pages keep their OneNote tags:
 - Checkbox tags (To Do, Attendance) are task items in Markdown, `- [ ]` and `- [x]`. Creating a page from Markdown turns task items into To Do checkboxes.
 - Other tags (Important, Question) are their name in brackets, such as `[Important]`. Creating from Markdown keeps that as text.
 - HTML keeps tags as a checkbox or label with `data-tag` attributes, so `onenote_create_page` restores them.
-- Both drop tags on plain code lines and on paragraphs that hold only an image. Markdown also drops tags in table cells and checkboxes on headings.
+- Both drop tags on plain code lines and on paragraphs that hold only an image. Markdown also drops tags in table cells, checkboxes on headings, and labels on empty paragraphs.
 - A bulleted To Do comes back from Markdown without its bullet: Markdown can't tell it from a To Do paragraph.
 
 `onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path. They embed local images:
