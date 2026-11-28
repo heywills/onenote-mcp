@@ -4,16 +4,29 @@ An MCP server that lets AI agents read, search, create, and delete pages in OneN
 
 ## Background
 
-Agents can't see your OneNote notebooks. The Microsoft Graph API can reach them, but it needs an Entra app registration and admin consent, which many organizations won't grant. MCP servers that return a whole page in the response also lose most of its formatting and all of its images, and fill the agent's context.
+Most OneNote MCP servers use the Microsoft Graph API. That works, but it's hard for agents in practice:
+- Graph needs an Entra app registration and user consent, and some organizations restrict both.
+- Personal notebooks, SharePoint site notebooks, and Teams group notebooks sit under different API paths, so a server has to find and query each one.
+- Responses carry a lot of metadata unless trimmed with [`$select`](https://learn.microsoft.com/en-us/graph/onenote-best-practices), which fills an agent's context.
+- Page images are API resources that need an authenticated download, so an agent can't open them from the page HTML.
+
+Returning a whole page in a tool response also loses its images and fills the agent's context.
 
 ## Solution
 
-This server drives OneNote desktop through COM, so it uses the app's own sign-in. Every notebook open in OneNote works: local, OneDrive, and SharePoint.
+This server drives OneNote desktop through its local COM API instead of Graph, so it uses the app's own sign-in:
+
+| Graph API | This server |
+|---|---|
+| App registration and consent | OneNote desktop's own sign-in |
+| Different paths for personal, SharePoint, and Teams notebooks | Every notebook open in OneNote desktop |
+| Metadata-heavy responses | Short hierarchy summaries, and pages saved to files |
+| Images behind authenticated downloads | Image files saved next to the page, or MCP images |
 
 It's built for agents with file access:
 - Page reads save to a Markdown or HTML file, with the page's images in a folder next to it.
 - Page creates read a Markdown or HTML file, and embed its local images.
-- A saved page creates back as the same page, so an agent can save a page, edit the file, and create the result.
+- A saved page comes back nearly the same when created again (see [Limits](#limits)), so an agent can save a page, edit the file, and create the result.
 
 Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT) and ported from Python to .NET.
 
@@ -27,6 +40,8 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 
 1. Clone the repo and build:
    ```powershell
+   git clone https://github.com/heywills/onenote-mcp.git
+   cd onenote-mcp
    dotnet publish src/OneNoteMcp -c Release -o publish
    ```
    The build references OneNote's interop assembly, which Office installs, so it builds only where OneNote desktop is installed.
@@ -34,10 +49,11 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
    ```powershell
    claude mcp add onenote --scope user -- "C:/path/to/onenote-mcp/publish/OneNoteMcp.exe"
    ```
-   For another client, add the exe as a stdio server:
+   For another client, add the exe as a stdio server. For example, in Claude Desktop or Cursor:
    ```json
    { "mcpServers": { "onenote": { "command": "C:/path/to/onenote-mcp/publish/OneNoteMcp.exe" } } }
    ```
+   VS Code uses a `servers` key, with `"type": "stdio"` on the server.
 3. Restart the client and ask: `Use the onenote MCP server to list my notebooks.`
 
 OneNote starts on the first call if it's closed.
@@ -61,7 +77,7 @@ Ask in plain language. For example:
 | `onenote_search` | Search all notebooks |
 | `onenote_search_in_notebook` | Search one notebook |
 | `onenote_get_page` | Save a page as Markdown or HTML |
-| `onenote_get_page_by_link` | Save a page from a "Copy link to page" link |
+| `onenote_get_page_by_link` | Save a page from a "Copy link to page" link: the `onenote:` link, the web link, or both |
 | `onenote_get_page_raw` | Save a page as OneNote XML, for debugging |
 | `onenote_get_page_images` | Images on a page, for the agent to see |
 | `onenote_get_image` | One image, by callback ID |
@@ -85,23 +101,28 @@ An image OneNote hasn't downloaded yet shows as `[Image N: reason]`, with any te
 
 The create tools take the body inline or from `inputPath`, an absolute UTF-8 file path. The title comes from the `title` parameter, the Markdown's leading `# ` heading, or the HTML's `<title>`.
 
-Local images are embedded:
+Local PNG, JPEG, GIF, BMP, and TIFF images are embedded:
 - From a file: images inside the file's folder, by relative path
-- Inline: absolute paths too
-- Images over 10 MB are shrunk, and a page holds up to 50 MB of images.
+- Inline: absolute paths only
+- Images over 10 MB are shrunk.
 
-Web images, network shares, files outside the folder, and images inside headings, links, or table headers stay links. The result counts both.
+These stay links, and the result counts both:
+- Web images
+- Network shares and mapped network drives, and every image of a file on a share
+- Files outside the folder, and links that lead out of it
+- Files over 50 MB, and images that would push the page past 50 MB
+- Images inside headings, links, formatting, or table headers
 
 ### Tags
 
 Pages keep their OneNote tags:
 - Checkbox tags (To Do, Attendance) are task items in Markdown: `- [ ]` and `- [x]`. Creating from Markdown turns task items into To Do checkboxes.
 - Other tags (Important, Question) are labels in brackets, such as `[Important]`. Creating from Markdown keeps them as text.
-- HTML keeps every tag, with `data-tag` attributes, so `onenote_create_page` restores them.
+- HTML keeps tags with `data-tag` attributes, so `onenote_create_page` restores them.
 
 ### Search
 
-Search matches page titles that contain every query word, then page text through Windows Search. Title matches come first, then text matches, each newest first, up to `maxResults` (20).
+Search matches page titles that contain every query word, then page text through Windows Search, which finds indexed pages only. Title matches come first, then text matches, each newest first, up to `maxResults` (20).
 - Title search finds new pages that Windows Search hasn't indexed yet.
 - A query with `OR`, `NOT`, `-word`, `+word`, or a property filter such as `author:x` searches text only.
 - Deleted pages are skipped.
@@ -115,13 +136,14 @@ Search matches page titles that contain every query word, then page text through
 Markdown can't hold everything a OneNote page can:
 - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
 - An image in a paragraph splits it: text, image, text. In a list item, it moves below the item text.
-- A hard line break splits a paragraph in two. OneNote drops line breaks inside a paragraph.
+- A hard line break splits a paragraph in two, and becomes a space in a list item. OneNote drops line breaks inside a paragraph.
 - Headings, tables, and code inside a quote lose the quote. Nested quotes flatten to one level.
 - Code blocks lose their language, and OneNote stores a tab in code as 8 spaces.
 - Numbered lists start at 1. Separate lists alternate between `1.` and `1)` in OneNote, so each restarts.
-- Tags in table cells, checkboxes on headings, and a To Do's bullet don't survive.
+- Bold covering a whole table header cell is dropped, since the header row is already bold. So is italic covering a whole h4 or h6 heading.
+- Tags in table cells, checkboxes on headings, labels on empty paragraphs, and a To Do's bullet don't survive.
 
-Both formats drop ink and paragraph spacing, and tags on code lines. OneNote also rewrites some markup (`#FF0000` becomes `red`) and drops trailing spaces.
+Both formats drop ink and paragraph spacing, and tags on plain code lines and on paragraphs that hold only an image. OneNote also rewrites some markup (`#FF0000` becomes `red`) and drops trailing spaces.
 
 ## Troubleshooting
 
@@ -133,7 +155,7 @@ Both formats drop ink and paragraph spacing, and tags on code lines. OneNote als
 ## How it works
 
 - Calls OneNote through `Application2Class` in OneNote's interop assembly. Late binding fails in 64-bit .NET, because OneNote registers its type library for 32-bit only.
-- COM calls run one at a time: OneNote handles one call at a time.
+- COM calls run one at a time, as OneNote requires.
 - Converts between OneNote's page XML and Markdown (Markdig) or HTML (AngleSharp).
 
 ## Contributing
