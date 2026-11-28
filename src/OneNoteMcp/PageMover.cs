@@ -56,7 +56,7 @@ public sealed partial class PageMover(IOneNoteClient oneNote)
         var section = SectionId().Match(pageId) is { Success: true } m ? TryPages($"{m.Groups[1].Value}{{1}}{{B0}}") : null;
         section = section is not null && Contains(section, pageId) ? section
             : TryPages("")?.Descendants(One + "Section").FirstOrDefault(s => Contains(s, pageId))
-              ?? throw new McpException("The page's section wasn't found. Is its notebook open in OneNote desktop?");
+              ?? throw new McpException("The page's section wasn't found. Is its notebook open in OneNote desktop, and its section unlocked?");
 
         if (IsDeleted(section) || (string?)self.Attribute("isInRecycleBin") == "true")
         {
@@ -75,13 +75,9 @@ public sealed partial class PageMover(IOneNoteClient oneNote)
             throw new McpException($"sectionId must be a section, not a {self.Name.LocalName}");
         }
 
-        if (IsDeleted(self))
-        {
-            throw new McpException("Can't move a page into Deleted Pages or the Recycle Bin. Use onenote_delete_page.");
-        }
-
-        return (string?)self.Attribute("isLocked") == "true"
-            ? throw new McpException("The section is locked. Unlock it in OneNote desktop first.")
+        // A locked section fails in UpdateHierarchy with OneNote's own "password-protected and locked" error
+        return IsDeleted(self)
+            ? throw new McpException("Can't move a page into Deleted Pages or the Recycle Bin. Use onenote_delete_page.")
             : XElement.Parse(oneNote.GetHierarchy(sectionId, HierarchyScope.hsPages));
     }
 

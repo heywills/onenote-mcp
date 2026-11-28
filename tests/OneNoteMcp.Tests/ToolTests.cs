@@ -319,21 +319,6 @@ public sealed class ToolTests : IDisposable
         Assert.Empty(_oneNote.HierarchyUpdates);
     }
 
-    [Fact]
-    public void RefusesALockedSection()
-    {
-        _oneNote.Hierarchy = (id, scope) => (id, scope) switch
-        {
-            (A, HierarchyScope.hsSelf) => $"""<one:Page xmlns:one="{FakeOneNote.Ns}" ID="{A}" name="A"/>""",
-            (From, HierarchyScope.hsPages) => SectionXml(From, "From", $"""<one:Page ID="{A}" name="A"/>"""),
-            (To, HierarchyScope.hsSelf) => SectionXml(To, "To", "", "isLocked=\"true\""),
-            _ => throw new InvalidOperationException($"Unexpected {id} {scope}"),
-        };
-
-        Assert.Contains("locked", Assert.Throws<McpException>(() => _tools.MovePage(A, To)).Message);
-        Assert.Empty(_oneNote.HierarchyUpdates);
-    }
-
     [Theory]
     [InlineData(" ", To, "pageId is empty")]
     [InlineData(A, null, "sectionId is empty")]
