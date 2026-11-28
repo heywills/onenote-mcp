@@ -31,13 +31,14 @@ public static partial class Hierarchy
             ParseSections(nb), ParseSectionGroups(nb))).ToList();
 
     /// <summary>The pages in hierarchy or <c>FindPages</c> XML, without those in Deleted Pages or the recycle bin.</summary>
-    /// <param name="notebook">The notebook name for XML scoped to a section or group, which has no notebook element</param>
-    public static IReadOnlyList<SearchResult> ParseSearchResults(string xml, string? notebook = null) =>
+    /// <remarks>
+    /// - XML scoped to a section or group has no notebook element, so its results have an empty notebook name.
+    /// </remarks>
+    public static IReadOnlyList<SearchResult> ParseSearchResults(string xml) =>
         AsNotebooks(XElement.Parse(xml)).Elements(One + "Notebook")
             .SelectMany(nb => nb.Descendants(One + "Section").Where(sec => !IsDeleted(sec)).SelectMany(sec => sec.Elements(One + "Page")
                 .Where(p => !IsTrue(p, "isInRecycleBin"))
-                .Select(p => new SearchResult(
-                    Attr(p, "ID"), Attr(p, "name"), (string?)nb.Attribute("name") ?? notebook ?? "", Attr(sec, "name"), Attr(p, "lastModifiedTime")))))
+                .Select(p => new SearchResult(Attr(p, "ID"), Attr(p, "name"), Attr(nb, "name"), Attr(sec, "name"), Attr(p, "lastModifiedTime")))))
             .ToList();
 
     /// <summary>

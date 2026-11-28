@@ -302,14 +302,17 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
     [Description("Search all open notebooks. " + SearchDescription)]
     public string Search(
         [Description("Search query")] string query,
-        [Description(MaxResultsDescription)] int maxResults = DefaultMaxResults) => SearchIn(query, "", maxResults);
+        [Description(MaxResultsDescription)] int maxResults = DefaultMaxResults) => RunSearch(query, "", maxResults);
 
-    [McpServerTool(Name = "onenote_search_in_notebook", ReadOnly = true)]
+    [McpServerTool(Name = "onenote_search_in", ReadOnly = true)]
     [Description("Search one notebook, section group, or section. " + SearchDescription)]
-    public string SearchInNotebook(
-        [Description("A notebook, section group, or section ID, from onenote_list_notebooks, onenote_get_notebook_tree, or onenote_list_sections")] string scopeId,
+    public string SearchInScope(
+        [Description("""
+            A notebook, section group, or section ID, from onenote_list_notebooks, onenote_get_notebook_tree, or onenote_list_sections.
+            Deleted Pages and the Recycle Bin return nothing, since search skips deleted pages.
+            """)] string scopeId,
         [Description("Search query")] string query,
-        [Description(MaxResultsDescription)] int maxResults = DefaultMaxResults) => SearchIn(query, scopeId, maxResults);
+        [Description(MaxResultsDescription)] int maxResults = DefaultMaxResults) => RunSearch(query, scopeId, maxResults);
 
     // Write
 
@@ -473,7 +476,7 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
     }
 
     /// <param name="scopeId">A notebook, section group, or section ID. Empty for all notebooks.</param>
-    private string SearchIn(string query, string scopeId, int maxResults)
+    private string RunSearch(string query, string scopeId, int maxResults)
     {
         if (string.IsNullOrWhiteSpace(query))
         {
@@ -485,10 +488,18 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
             throw new McpException("maxResults must be at least 1");
         }
 
-        var notebook = NotebookName(scopeId);
-        var pages = TitleWords(query) is null ? null : AllPages(scopeId, notebook);
-        var found = TextMatches(query, scopeId, notebook, canFail: pages is not null);
+        scopeId = scopeId.Trim();
+        CheckScope(scopeId);
+        var pages = TitleWords(query) is null ? null : AllPages(scopeId);
+        var found = TextMatches(query, scopeId, canFail: pages is not null);
         var results = RankSearchResults(query, pages, found ?? []);
+
+        // A section or group scope returns that node without its notebook
+        if (results.Any(r => r.Notebook.Length == 0) && NotebookName(scopeId) is { } notebook)
+        {
+            results = [.. results.Select(r => r.Notebook.Length == 0 ? r with { Notebook = notebook } : r)];
+        }
+
         return ToJson(new
         {
             Query = query, TitleSearch = pages is not null, TextSearch = found is not null, Total = results.Count, Results = results.Take(maxResults),
@@ -496,12 +507,11 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
     }
 
     /// <summary>Windows Search's matches. Null when it fails and <paramref name="canFail"/>, so title matches still come back.</summary>
-    /// <param name="notebook">The scope's notebook name, for results under a section or group scope</param>
-    private IReadOnlyList<SearchResult>? TextMatches(string query, string scopeId, string? notebook, bool canFail)
+    private IReadOnlyList<SearchResult>? TextMatches(string query, string scopeId, bool canFail)
     {
         try
         {
-            return ParseSearchResults(oneNote.FindPages(query, scopeId), notebook);
+            return ParseSearchResults(oneNote.FindPages(query, scopeId));
         }
         catch (McpException) when (canFail)
         {
@@ -513,11 +523,11 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
     /// <remarks>
     /// - A notebook that isn't downloaded or is offline can fail the listing, but text search may still work.
     /// </remarks>
-    private IReadOnlyList<SearchResult>? AllPages(string scopeId, string? notebook)
+    private IReadOnlyList<SearchResult>? AllPages(string scopeId)
     {
         try
         {
-            return ParseSearchResults(oneNote.GetHierarchy(scopeId, HierarchyScope.hsPages), notebook);
+            return ParseSearchResults(oneNote.GetHierarchy(scopeId, HierarchyScope.hsPages));
         }
         catch (McpException)
         {
@@ -525,21 +535,40 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
         }
     }
 
-    /// <summary>The notebook a section or section group scope sits in. Null for all notebooks, a notebook scope, or when OneNote can't say.</summary>
+    /// <summary>Refuses a page ID or other ID that holds no pages, which would search nothing.</summary>
     /// <remarks>
-    /// - A section or group scope returns that node as the root, without its notebook. Results still name it.
+    /// - An offline notebook can't answer, but its search may still work, so a failed check passes.
     /// </remarks>
-    private string? NotebookName(string scopeId)
+    private void CheckScope(string scopeId)
     {
-        if (string.IsNullOrEmpty(scopeId))
+        if (scopeId.Length == 0)
         {
-            return null;
+            return;
         }
 
+        string xml;
+        try
+        {
+            xml = oneNote.GetHierarchy(scopeId, HierarchyScope.hsSelf);
+        }
+        catch (McpException)
+        {
+            return;
+        }
+
+        if (XElement.Parse(xml).Name.LocalName is not ("Notebook" or "SectionGroup" or "Section"))
+        {
+            throw new McpException("scopeId must be a notebook, section group, or section");
+        }
+    }
+
+    /// <summary>The notebook a section or section group sits in, or null when OneNote can't say.</summary>
+    private string? NotebookName(string scopeId)
+    {
         try
         {
             return XElement.Parse(oneNote.GetHierarchy("", HierarchyScope.hsSections)).Descendants()
-                .FirstOrDefault(e => (string?)e.Attribute("ID") == scopeId && e.Name != One + "Notebook")?
+                .FirstOrDefault(e => string.Equals((string?)e.Attribute("ID"), scopeId, StringComparison.OrdinalIgnoreCase) && e.Name != One + "Notebook")?
                 .Ancestors(One + "Notebook").FirstOrDefault()?.Attribute("name")?.Value;
         }
         catch (McpException)

@@ -129,9 +129,19 @@ public sealed class ToolTests : IDisposable
             : id == scope ? xml : throw new InvalidOperationException($"Listed {id}, expected {scope}");
         _oneNote.Find = (_, id) => id == scope ? xml : throw new InvalidOperationException($"Searched {id}, expected {scope}");
 
-        var result = Assert.Single(JsonDocument.Parse(_tools.SearchInNotebook(scope, "project")).RootElement.GetProperty("results").EnumerateArray());
+        var result = Assert.Single(JsonDocument.Parse(_tools.SearchInScope(scope, "project")).RootElement.GetProperty("results").EnumerateArray());
 
         Assert.Equal(("Work", "S", true), (result.GetProperty("notebook").GetString(), result.GetProperty("section").GetString(), result.GetProperty("in_title").GetBoolean()));
+    }
+
+    [Fact]
+    public void RefusesAPageAsSearchScope()
+    {
+        _oneNote.Hierarchy = (id, scope) => scope == HierarchyScope.hsSelf
+            ? $"""<one:Page xmlns:one="{FakeOneNote.Ns}" ID="{id}" name="P"/>"""
+            : throw new InvalidOperationException("Searched a page");
+
+        Assert.Equal("scopeId must be a notebook, section group, or section", Assert.Throws<McpException>(() => _tools.SearchInScope(" p ", "project")).Message);
     }
 
     [Fact]

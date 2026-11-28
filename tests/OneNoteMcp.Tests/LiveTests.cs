@@ -258,10 +258,10 @@ public class LiveTests
 
             // Scoped to the notebook or the section, with the notebook still named
             var (notebookId, sectionId) = TestIds();
-            var notebookName = Environment.GetEnvironmentVariable(SectionVariable)![..Environment.GetEnvironmentVariable(SectionVariable)!.LastIndexOf('/')];
+            var notebookName = TestNames().Notebook;
             foreach (var scope in new[] { notebookId, sectionId })
             {
-                var scoped = Assert.Single(JsonDocument.Parse(_tools.SearchInNotebook(scope, token)).RootElement.GetProperty("results").EnumerateArray());
+                var scoped = Assert.Single(JsonDocument.Parse(_tools.SearchInScope(scope, token)).RootElement.GetProperty("results").EnumerateArray());
                 Assert.Equal((pageId, notebookName), (scoped.GetProperty("page_id").GetString(), scoped.GetProperty("notebook").GetString()));
             }
         });
@@ -512,16 +512,19 @@ public class LiveTests
 
     private string SectionId() => TestIds().Section;
 
-    private (string Notebook, string Section) TestIds()
+    /// <summary>The test notebook and section names, from <see cref="SectionVariable"/>.</summary>
+    private static (string Notebook, string Section) TestNames()
     {
         var path = Environment.GetEnvironmentVariable(SectionVariable)!;
         var slash = path.LastIndexOf('/');
-        if (slash <= 0)
-        {
-            throw new InvalidOperationException($"Set {SectionVariable} to \"Notebook name/Section name\", not \"{path}\"");
-        }
+        return slash > 0
+            ? (path[..slash], path[(slash + 1)..])
+            : throw new InvalidOperationException($"Set {SectionVariable} to \"Notebook name/Section name\", not \"{path}\"");
+    }
 
-        var (notebookName, sectionName) = (path[..slash], path[(slash + 1)..]);
+    private (string Notebook, string Section) TestIds()
+    {
+        var (notebookName, sectionName) = TestNames();
         static string? IdOf(string json, string name) => JsonDocument.Parse(json).RootElement.EnumerateArray()
             .Where(e => e.GetProperty("name").GetString() == name).Select(e => e.GetProperty("id").GetString()).FirstOrDefault();
 
