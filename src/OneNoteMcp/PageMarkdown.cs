@@ -83,7 +83,10 @@ public static partial class PageMarkdown
 
     /// <summary>Markdown for an image that couldn't be saved, with the reason and the image's text as plain text on one line.</summary>
     public static string ImageProblem(int index, string reason, string? text = null) =>
-        $"[Image {index}: {Escape(ProblemText(reason, text).Replace(']', ')'))}]";
+        $"[Image {index}: {EscapeBracketed(ProblemText(reason, text))}]";
+
+    /// <summary>Text escaped to sit inside <c>[...]</c>, where a <c>]</c> would end it.</summary>
+    internal static string EscapeBracketed(string text) => Escape(text).Replace("]", @"\]");
 
     /// <summary>Why an image is missing, on one line, plus the text OneNote recognized in it.</summary>
     /// <remarks>
@@ -92,14 +95,33 @@ public static partial class PageMarkdown
     internal static string ProblemText(string reason, string? text)
     {
         var line = Whitespace().Replace(reason, " ").Trim();
-        return text is null ? line : $"{line.TrimEnd('.')}. Text in image: \"{text}\"";
+        if (text is null)
+        {
+            return line;
+        }
+
+        var lead = line.Length == 0 ? "" : line.EndsWith('.') || line.EndsWith('?') || line.EndsWith('!') || line.EndsWith('…') || line.EndsWith(')') ? $"{line} " : $"{line}. ";
+        return $"{lead}Text in image: \"{text}\"";
     }
 
-    /// <summary>The text OneNote recognized in an image, on one line, or null.</summary>
-    internal static string? ImageText(XElement img) =>
-        img.Element(One + "OCRData")?.Element(One + "OCRText")?.Value is { } text && Whitespace().Replace(text, " ").Trim() is { Length: > 0 } line
-            ? line
-            : null;
+    /// <summary>The most characters of an image's text that outputs carry</summary>
+    private const int MaxImageText = 500;
+
+    /// <summary>The text OneNote recognized in an image: one line, up to <see cref="MaxImageText"/> characters, with double quotes made single. Null when there's none.</summary>
+    /// <remarks>
+    /// - Only images that can't be returned carry it, and the inline image list. Saved images keep "Image N" as alt text, so round trips don't change when OneNote reads an image again.
+    /// - Single quotes keep the text's end clear inside <c>"..."</c>.
+    /// </remarks>
+    internal static string? ImageText(XElement img)
+    {
+        if (img.Element(One + "OCRData")?.Element(One + "OCRText")?.Value is not { } text
+            || Whitespace().Replace(text, " ").Trim().Replace('"', '\'') is not { Length: > 0 } line)
+        {
+            return null;
+        }
+
+        return line.Length > MaxImageText ? $"{line[..MaxImageText].TrimEnd()}…" : line;
+    }
 
     /// <summary>
     /// Strips the inline HTML OneNote keeps inside text elements.

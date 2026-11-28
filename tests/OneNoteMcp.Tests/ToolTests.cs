@@ -169,9 +169,10 @@ public sealed class ToolTests : IDisposable
     [Fact]
     public void ListsImageCallbackIdsInline()
     {
-        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1")));
+        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1") + Image("cb2", "a[1] *b*")));
 
-        Assert.EndsWith("**Image References:**\n- [Image 1]: callback_id=`cb1`\n", _tools.GetPage("page", inline: true));
+        Assert.EndsWith("**Image References:**\n- [Image 1]: callback_id=`cb1`\n- [Image 2]: callback_id=`cb2` text: \"a[1\\] \\*b\\*\"\n",
+            _tools.GetPage("page", inline: true));
     }
 
     [Fact]

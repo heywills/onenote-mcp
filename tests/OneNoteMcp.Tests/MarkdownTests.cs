@@ -159,10 +159,32 @@ public class MarkdownTests
 
     [Theory]
     [InlineData("OneNote hasn't downloaded this image yet.", "[Image 3: OneNote hasn't downloaded this image yet.]")]
-    [InlineData("Can't save \"C:\\a\\b\":\nAccess denied]", "[Image 3: Can't save \"C:\\\\a\\\\b\": Access denied)]")]
+    [InlineData("Can't save \"C:\\a\\b\":\nAccess denied]", "[Image 3: Can't save \"C:\\\\a\\\\b\": Access denied\\]]")]
     [InlineData("bad *markup* and `code`", "[Image 3: bad \\*markup\\* and \\`code\\`]")]
     public void DescribesImagesItCouldntSave(string reason, string markdown) =>
         Assert.Equal(markdown, PageMarkdown.ImageProblem(3, reason));
+
+    [Theory]
+    [InlineData("Not downloaded", "arr[0]", "[Image 3: Not downloaded. Text in image: \"arr[0\\]\"]")]
+    [InlineData("Is it downloaded?", "x", "[Image 3: Is it downloaded? Text in image: \"x\"]")]
+    [InlineData("", "x", "[Image 3: Text in image: \"x\"]")]
+    public void AddsTheImagesText(string reason, string text, string markdown) =>
+        Assert.Equal(markdown, PageMarkdown.ImageProblem(3, reason, text));
+
+    [Fact]
+    public void ReadsImageTextOnOneLineWithACap()
+    {
+        static string? Text(string ocr) => PageMarkdown.Convert($"""
+            <one:Page xmlns:one="{Ns}" name="P"><one:Title/><one:Outline><one:OEChildren><one:OE><one:Image>
+            <one:OCRData lang="en-US"><one:OCRText><![CDATA[{ocr}]]></one:OCRText></one:OCRData><one:CallbackID callbackID="cb"/>
+            </one:Image></one:OE></one:OEChildren></one:Outline></one:Page>
+            """).Images[0].Text;
+
+        Assert.Equal("Click 'Save' now", Text("Click\r\n\"Save\"  now"));
+        Assert.Null(Text(" \n "));
+        var capped = Text(new string('a', 600))!;
+        Assert.Equal((501, '…'), (capped.Length, capped[^1]));
+    }
 
     [Theory]
     [InlineData(new byte[] { 0x89, 0x50, 0x4E, 0x47 }, "png")]

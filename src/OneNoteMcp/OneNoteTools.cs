@@ -181,7 +181,8 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
         var refs = images.Select(img =>
         {
             var dims = img is { Width: { } w, Height: { } h } ? $" ({w:0}x{h:0})" : "";
-            return $"- [Image {img.Index}]: callback_id=`{img.CallbackId}`{dims}";
+            var text = img.Text is { } t ? $" text: \"{PageMarkdown.EscapeBracketed(t)}\"" : "";
+            return $"- [Image {img.Index}]: callback_id=`{img.CallbackId}`{dims}{text}";
         });
         return $"{markdown}\n\n---\n**Image References:**\n{string.Join("\n", refs)}\n";
     }
