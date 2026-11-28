@@ -354,6 +354,18 @@ public class OutputTests
     }
 
     [Fact]
+    public void RejectsAnUnknownFormat() =>
+        Assert.Contains("format must be markdown or html", Assert.Throws<McpException>(() => _tools.GetPage("{page}", @"C:\work\page.pdf", format: "pdf")).Message);
+
+    [Fact]
+    public void ReadsNoFormatAsMarkdown() =>
+        Assert.Contains("Pass outputPath", Assert.Throws<McpException>(() => _tools.GetPage("{page}", format: null!)).Message);
+
+    [Fact]
+    public void NeedsATitleForHtmlWithoutOne() =>
+        Assert.Contains("No title", Assert.Throws<McpException>(() => _tools.CreatePage("{section}", contentHtml: "<p>x</p>")).Message);
+
+    [Fact]
     public void RejectsPathAndInlineTogether() =>
         Assert.Contains("not both", Assert.Throws<McpException>(() => _tools.GetPage("{page}", @"C:\work\page.md", inline: true)).Message);
 }

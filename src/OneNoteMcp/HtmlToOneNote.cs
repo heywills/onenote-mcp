@@ -95,10 +95,18 @@ public static partial class HtmlToOneNote
             page.AddFirst(newDefs);
         }
 
-        page.Add(outline);
+        // OneNote rejects an Outline with nothing in it
+        if (children.HasElements)
+        {
+            page.Add(outline);
+        }
 
         return (builder.Embedded, builder.Linked);
     }
+
+    /// <summary>The document's <c>&lt;title&gt;</c>, or null when it has none.</summary>
+    public static string? Title(string html) =>
+        new HtmlParser().ParseDocument(html).Title?.Trim() is { Length: > 0 } title ? title : null;
 
     private static bool IsInline(INode n) => n is IText || (n is IElement e && Inline.Contains(e.LocalName));
 
@@ -142,11 +150,17 @@ public static partial class HtmlToOneNote
                 "u" => $"<u>{inner}</u>",
                 "s" or "strike" or "del" => $"<span style='text-decoration:line-through'>{inner}</span>",
                 "sup" or "sub" => $"<{e.LocalName}>{inner}</{e.LocalName}>",
-                "code" => $"<span style='font-family:Consolas'>{inner}</span>",
-                "a" => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("href")))}\">{inner}</a>",
 
-                // OneNote can't load an image from a URL here: keep it as a link, or its alt text inside a link.
-                "img" when inLink => WebUtility.HtmlEncode(alt),
+                // OneNote drops a bare <br> in text, but keeps one followed by a newline
+                "br" => "<br>\n",
+                "code" => $"<span style='font-family:Consolas'>{inner}</span>",
+                "a" when SafeHtml.IsSafeHref(e.GetAttribute("href") ?? "") => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("href")))}\">{inner}</a>",
+
+                // Colors, highlights, fonts, and sizes, such as onenote_get_page's HTML keeps
+                "span" when Css.Inline(e.GetAttribute("style")) is { Length: > 0 } css => $"<span style=\"{WebUtility.HtmlEncode(css)}\">{inner}</span>",
+
+                // OneNote can't load an image from a URL here: keep it as a link, or its alt text inside a link, with no src, or for a script link.
+                "img" when inLink || e.GetAttribute("src") is not { Length: > 0 } src || !SafeHtml.IsSafeHref(src) => WebUtility.HtmlEncode(alt),
                 "img" => $"<a href=\"{WebUtility.HtmlEncode(Href(e.GetAttribute("src")))}\">{WebUtility.HtmlEncode(alt)}</a>",
                 _ => inner,
             });
@@ -186,6 +200,11 @@ public static partial class HtmlToOneNote
         public int Linked { get; private set; }
 
         private void CountLink() => Linked++;
+
+        /// <remarks>
+        /// - From HTML, <c>br</c> is a line break inside the paragraph. From Markdown, a hard break splits the paragraph.
+        /// </remarks>
+        private bool IsInlineNode(INode n) => IsInline(n) || (!fromMarkdown && n is IElement { LocalName: "br" });
 
         private bool _inQuote;
         private bool _inTable;
@@ -258,7 +277,8 @@ public static partial class HtmlToOneNote
 
             _embeddedBytes += image.Data.Length;
             Embedded++;
-            return new XElement(One + "Image", new XAttribute("format", image.Format), new XElement(One + "Data", Convert.ToBase64String(image.Data)));
+            // Schema order: Size before Data
+            return new XElement(One + "Image", new XAttribute("format", image.Format), ImageSize(img), new XElement(One + "Data", Convert.ToBase64String(image.Data)));
         }
 
         /// <summary>
@@ -270,6 +290,13 @@ public static partial class HtmlToOneNote
 
             void Flush()
             {
+                // A line break between blocks isn't a line of its own
+                if (run.All(n => n is IElement { LocalName: "br" } || (n is IText t && string.IsNullOrWhiteSpace(t.Data))))
+                {
+                    run.Clear();
+                    return;
+                }
+
                 var text = InlineHtml(run, inTable: _inTable && fromMarkdown, imageLinked: CountLink).Trim();
                 if (text.Length > 0)
                 {
@@ -289,7 +316,7 @@ public static partial class HtmlToOneNote
                     continue;
                 }
 
-                if (IsInline(n))
+                if (IsInlineNode(n))
                 {
                     run.Add(n);
                     continue;
@@ -315,12 +342,13 @@ public static partial class HtmlToOneNote
                 case "br":
                     break;
                 case "h1" or "h2" or "h3" or "h4" or "h5" or "h6":
-                    if (parent.HasElements)
+                    // From Markdown, a blank line before a heading, like hand-made pages. HTML says where its blank lines go.
+                    if (fromMarkdown && parent.HasElements && !IsBlank(parent.Elements(One + "OE").LastOrDefault()))
                     {
-                        Oe(parent, ""); // blank line before a heading, like hand-made pages
+                        Oe(parent, "");
                     }
 
-                    Oe(parent, InlineHtml(e.ChildNodes, imageLinked: CountLink), style: StyleIndex(e.LocalName));
+                    ParagraphFormat(Oe(parent, InlineHtml(e.ChildNodes, imageLinked: CountLink), style: StyleIndex(e.LocalName)), e);
                     break;
                 case "blockquote":
                     Quote(e, parent);
@@ -343,10 +371,64 @@ public static partial class HtmlToOneNote
                     Oe(parent, new string('―', 20));
                     break;
                 default: // p, div, section, etc.
-                    Blocks(e.ChildNodes, parent);
+                    Paragraph(e, parent);
                     break;
             }
         }
+
+        /// <summary>A paragraph or container, with its alignment and OE style.</summary>
+        /// <remarks>
+        /// - An empty <c>p</c>, or one with only <c>br</c>, is a blank line, as onenote_get_page's HTML writes one.
+        /// - A <c>div class="indent"</c> nests its content under the OE before it, as OneNote indents.
+        /// </remarks>
+        private void Paragraph(IElement e, XElement parent)
+        {
+            if (e.LocalName == "div" && e.ClassList.Contains("indent") && parent.Elements(One + "OE").LastOrDefault() is { } owner)
+            {
+                // An empty indent adds nothing: OneNote may reject an empty OEChildren
+                var children = owner.Element(One + "OEChildren") ?? new XElement(One + "OEChildren");
+                Blocks(e.ChildNodes, children);
+                if (children.Parent is null && children.HasElements)
+                {
+                    owner.Add(children);
+                }
+
+                return;
+            }
+
+            var before = parent.Elements(One + "OE").Count();
+            Blocks(e.ChildNodes, parent);
+            var added = parent.Elements(One + "OE").Skip(before).ToList();
+            if (added.Count == 0 && e.LocalName == "p" && e.Children.All(c => c.LocalName == "br") && string.IsNullOrWhiteSpace(e.TextContent))
+            {
+                added.Add(Oe(parent, "", style: _inQuote ? StyleIndex("blockquote") : null));
+            }
+
+            foreach (var oe in added)
+            {
+                ParagraphFormat(oe, e);
+            }
+        }
+
+        /// <summary>Copies a block element's font, color, and alignment to its OE.</summary>
+        private static void ParagraphFormat(XElement oe, IElement e)
+        {
+            var style = e.GetAttribute("style");
+            if (Css.Paragraph(style) is { Length: > 0 } css && oe.Attribute("style") is null)
+            {
+                oe.SetAttributeValue("style", css);
+            }
+
+            // An inner paragraph's alignment wins over its container's
+            var alignment = Css.Value(style, "text-align")?.ToLowerInvariant();
+            if (alignment is "center" or "right" or "left" && oe.Attribute("alignment") is null)
+            {
+                oe.SetAttributeValue("alignment", alignment);
+            }
+        }
+
+        private static bool IsBlank(XElement? oe) =>
+            oe is not null && oe.Elements().All(c => c.Name == One + "T") && string.IsNullOrWhiteSpace(string.Concat(oe.Elements(One + "T").Select(t => t.Value)));
 
         private void Quote(IElement quote, XElement parent)
         {
@@ -377,9 +459,10 @@ public static partial class HtmlToOneNote
         private void Code(IElement pre, XElement parent)
         {
             var code = StyleIndex("code");
-            if (HasStyle(parent.Elements(One + "OE").LastOrDefault(), "code"))
+            // Keeps back-to-back code blocks apart. An indent under the last code line means one block, split to show the indent.
+            if (parent.Elements(One + "OE").LastOrDefault() is { } last && HasStyle(last, "code") && last.Element(One + "OEChildren") is null)
             {
-                Oe(parent, ""); // keeps back-to-back code blocks apart
+                Oe(parent, "");
             }
 
             // Only the final newline ends the code. Leading and inner blank lines are code.
@@ -417,8 +500,8 @@ public static partial class HtmlToOneNote
         /// </remarks>
         private void ListItem(IElement li, XElement parent, string listKind, (int Value, string Format) number)
         {
-            var inline = li.ChildNodes.Where(IsInline).ToList();
-            var nested = li.ChildNodes.Where(c => !IsInline(c)).ToList();
+            var inline = li.ChildNodes.Where(IsInlineNode).ToList();
+            var nested = li.ChildNodes.Where(c => !IsInlineNode(c)).ToList();
 
             // Loose lists wrap the item text in <p>: use the first paragraph as the item text.
             if (string.IsNullOrWhiteSpace(InlineHtml(inline)) && nested.FirstOrDefault() is IElement { LocalName: "p" } p)
@@ -434,6 +517,7 @@ public static partial class HtmlToOneNote
             var oe = imageOnly
                 ? Oe(parent, "", style: style, listKind: listKind, number: number, content: images[0].Image)
                 : Oe(parent, InlineHtml(inline, imageLinked: CountLink), style: style, listKind: listKind, number: number);
+            ParagraphFormat(oe, li);
 
             var children = new XElement(One + "OEChildren");
             foreach (var (_, image) in images.Skip(imageOnly ? 1 : 0))
@@ -463,7 +547,14 @@ public static partial class HtmlToOneNote
                 new XElement(One + "Columns", Enumerable.Range(0, columns).Select(i =>
                     new XElement(One + "Column", new XAttribute("index", i), new XAttribute("width", "120")))));
 
-            foreach (var row in rows)
+            // From HTML, a first row of only th is OneNote's own header row. Other header cells, and all from Markdown, are bold text.
+            var headerRow = !fromMarkdown && rows[0].Count > 0 && rows[0].All(c => c.LocalName == "th");
+            if (headerRow)
+            {
+                tbl.SetAttributeValue("hasHeaderRow", "true");
+            }
+
+            foreach (var (row, rowIndex) in rows.Select((row, rowIndex) => (row, rowIndex)))
             {
                 var r = new XElement(One + "Row");
                 for (var i = 0; i < columns; i++)
@@ -471,7 +562,7 @@ public static partial class HtmlToOneNote
                     var cellChildren = new XElement(One + "OEChildren");
                     if (i < row.Count)
                     {
-                        if (row[i].LocalName == "th")
+                        if (row[i].LocalName == "th" && !(headerRow && rowIndex == 0))
                         {
                             Oe(cellChildren, $"<b>{InlineHtml(row[i].ChildNodes, inTable: fromMarkdown, imageLinked: CountLink).Trim()}</b>");
                         }
@@ -486,7 +577,13 @@ public static partial class HtmlToOneNote
                         Oe(cellChildren, "");
                     }
 
-                    r.Add(new XElement(One + "Cell", cellChildren));
+                    var cell = new XElement(One + "Cell", cellChildren);
+                    if (i < row.Count && Shading(row[i]) is { } shading)
+                    {
+                        cell.SetAttributeValue("shadingColor", shading);
+                    }
+
+                    r.Add(cell);
                 }
 
                 tbl.Add(r);
@@ -496,6 +593,24 @@ public static partial class HtmlToOneNote
         }
     }
 
-    [GeneratedRegex(@"\s+")]
+    /// <summary>A cell's background color, as OneNote's <c>#RRGGBB</c> shading. Null for none or another form.</summary>
+    private static string? Shading(IElement cell) =>
+        (Css.Value(cell.GetAttribute("style"), "background-color") ?? Css.Value(cell.GetAttribute("style"), "background")) is { } color
+        && Css.IsHexColor(color) ? color : null;
+
+    /// <summary>An image's size from its <c>style</c>, in points, as onenote_get_page's HTML writes it.</summary>
+    private static XElement? ImageSize(IElement img) =>
+        Points(Css.Value(img.GetAttribute("style"), "width")) is { } width && Points(Css.Value(img.GetAttribute("style"), "height")) is { } height
+            ? new XElement(One + "Size", new XAttribute("width", width), new XAttribute("height", height), new XAttribute("isSetByUser", "true"))
+            : null;
+
+    private static string? Points(string? value) =>
+        value is not null && value.EndsWith("pt", StringComparison.OrdinalIgnoreCase)
+        && double.TryParse(value[..^2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var points) && points > 0
+            ? points.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+            : null;
+
+    // Not \s, which would turn a non-breaking space into a plain one
+    [GeneratedRegex(@"[ \t\r\n\f]+")]
     private static partial Regex Whitespace();
 }

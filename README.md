@@ -12,18 +12,26 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_list_sections` | Sections in a notebook, including section groups |
 | `onenote_list_pages` | Pages in a section |
 | `onenote_get_notebook_tree` | Notebooks, groups, sections, and page titles |
-| `onenote_get_page` | Page as Markdown: headings, nested lists, tables, code blocks, inline formatting, and images |
+| `onenote_get_page` | Page as Markdown or HTML: headings, nested lists, tables, code blocks, inline formatting, and images |
 | `onenote_get_page_by_link` | Page from a "Copy link to page" link (`onenote:` or web link) |
 | `onenote_get_page_raw` | Page as OneNote XML |
 | `onenote_get_page_images` | Images on a page |
 | `onenote_get_image` | One image by callback ID |
 | `onenote_search` | Search all notebooks |
 | `onenote_search_in_notebook` | Search one notebook |
-| `onenote_create_page` | New page from HTML: headings, nested lists, tables, code, images |
+| `onenote_create_page` | New page from HTML: headings, nested lists, tables, code, images. Reads back the HTML `onenote_get_page` saves. |
 | `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown, images included. |
 | `onenote_delete_page` | Moves a page to Deleted Pages. Subpages stay. |
 
 `onenote_get_page`, `onenote_get_page_by_link`, and `onenote_get_page_raw` save to `outputPath`, an absolute file path the agent names, and return the path. The Markdown tools save images full size to a folder next to the page and link them: `page.md` gets `page_images`. `inline=true` returns the page in the response instead, with `[Image N]` and callback IDs for the image tools.
+
+`format=html` keeps what Markdown drops:
+- Colors, highlights, fonts, and sizes
+- Alignment and indented paragraphs
+- Table header rows and cell shading
+- Image sizes
+
+`onenote_create_page` reads it back, with the title from `<title>`. Tags, ink, and paragraph spacing aren't kept. OneNote also rewrites some markup (`#FF0000` becomes `red`) and drops trailing spaces.
 
 `onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path. They embed local images:
 - From a file: only images inside the file's folder, by relative path

@@ -171,7 +171,10 @@ public class LiveTests
     [LiveFact]
     public void OpensPageByLink() =>
         WithPage("# Live link test (deleting now)\n\nBody", pageId =>
-            Assert.StartsWith($"page_id: `{pageId}`", _tools.GetPageByLink(_client.GetHyperlink(pageId), inline: true)));
+        {
+            Assert.StartsWith($"page_id: `{pageId}`", _tools.GetPageByLink(_client.GetHyperlink(pageId), inline: true));
+            Assert.StartsWith($"<!DOCTYPE html>\n<!-- page_id: {pageId} -->\n<html>", _tools.GetPageByLink(_client.GetHyperlink(pageId), inline: true, format: "html"));
+        });
 
     [LiveFact]
     public void SavesPagesToFiles() =>
@@ -339,6 +342,72 @@ public class LiveTests
                 Assert.Equal(saved.GetProperty("images").GetInt32(), JsonDocument.Parse(created).RootElement.GetProperty("images").GetInt32());
                 Assert.Equal(Body(_tools.GetPage(saved.GetProperty("page_id").GetString()!, inline: true)), Body(_tools.GetPage(copyId, inline: true)));
             });
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+    }
+
+    // A page created from onenote_get_page's HTML reads back as the same HTML
+    [LiveFact]
+    public void RoundTripsHtmlThroughOneNote()
+    {
+        const string html = """
+            <p style="font-family:Calibri;font-size:12.0pt;color:#14324D;text-align:center">Centered</p>
+            <p>Text with <span style="color:#FF0000">red</span>, <span style="background:yellow">highlight</span>, and a<br>line break</p>
+            <p>Parent</p>
+            <div class="indent"><p>Indented child</p></div>
+            <p></p>
+            <h2>Heading</h2>
+            <ul><li>Bullet<ol><li>Number</li></ol></li></ul>
+            <table><tr><th>Head</th></tr><tr><td style="background-color:#DDEBF7">Shaded</td></tr></table>
+            <pre>A
+            B</pre><div class="indent"><p>Under B</p></div><pre>C</pre>
+            """;
+        WithCreated(_tools.CreatePage(SectionId(), "Live HTML round trip (deleting now)", html), pageId =>
+        {
+            var first = _tools.GetPage(pageId, inline: true, format: "html");
+            // One code block, split to show the indent, with no blank line added
+            Assert.Contains("</div>\n<pre>\nC</pre>", first);
+            // OneNote writes #FF0000 as red, and copies the alignment into the style
+            Assert.Contains("text-align:center\"", first);
+            Assert.DoesNotContain("text-align:center;text-align", first);
+            Assert.Contains("color:red", first);
+            Assert.Contains("<br", first);
+            Assert.Contains("class=\"indent\"", first);
+            Assert.Contains("<th>", first);
+            Assert.Contains("background-color:#DDEBF7", first);
+
+            // OneNote line-wraps its own markup differently each time
+            static string Collapse(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+            WithCreated(_tools.CreatePage(SectionId(), contentHtml: first), copyId =>
+                Assert.Equal(Collapse(first), Collapse(_tools.GetPage(copyId, inline: true, format: "html"))));
+        });
+    }
+
+    [LiveFact]
+    public void SavesHtmlWithImagesAndCreatesItAgain()
+    {
+        var link = Environment.GetEnvironmentVariable("ONENOTE_LIVE_IMAGE_LINK");
+        if (string.IsNullOrEmpty(link))
+        {
+            return; // optional
+        }
+
+        var folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+        try
+        {
+            var page = Path.Combine(folder, "page.html");
+            var saved = JsonDocument.Parse(_tools.GetPageByLink(link, page, format: "html")).RootElement;
+            Assert.Contains("<img src=\"page_images/image-1.", File.ReadAllText(page));
+
+            var created = _tools.CreatePage(SectionId(), inputPath: page);
+            WithCreated(created, copyId =>
+                Assert.Equal(saved.GetProperty("images").GetInt32(), JsonDocument.Parse(created).RootElement.GetProperty("images").GetInt32()));
         }
         finally
         {
