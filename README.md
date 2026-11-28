@@ -75,7 +75,7 @@ Ask in plain language. For example:
 | `onenote_list_pages` | Pages in a section |
 | `onenote_get_notebook_tree` | Notebooks, groups, sections, and page titles |
 | `onenote_search` | Search all notebooks |
-| `onenote_search_in_notebook` | Search one notebook |
+| `onenote_search_in_notebook` | Search one notebook, section group, or section |
 | `onenote_get_page` | Save a page as Markdown or HTML |
 | `onenote_get_page_by_link` | Save a page from a "Copy link to page" link: the `onenote:` link, the web link, or both |
 | `onenote_get_page_raw` | Save a page as OneNote XML, for debugging |

@@ -255,6 +255,15 @@ public class LiveTests
             var found = JsonDocument.Parse(_tools.Search(token.ToUpperInvariant())).RootElement;
             var result = Assert.Single(found.GetProperty("results").EnumerateArray());
             Assert.Equal((pageId, true), (result.GetProperty("page_id").GetString(), result.GetProperty("in_title").GetBoolean()));
+
+            // Scoped to the notebook or the section, with the notebook still named
+            var (notebookId, sectionId) = TestIds();
+            var notebookName = Environment.GetEnvironmentVariable(SectionVariable)![..Environment.GetEnvironmentVariable(SectionVariable)!.LastIndexOf('/')];
+            foreach (var scope in new[] { notebookId, sectionId })
+            {
+                var scoped = Assert.Single(JsonDocument.Parse(_tools.SearchInNotebook(scope, token)).RootElement.GetProperty("results").EnumerateArray());
+                Assert.Equal((pageId, notebookName), (scoped.GetProperty("page_id").GetString(), scoped.GetProperty("notebook").GetString()));
+            }
         });
     }
 
