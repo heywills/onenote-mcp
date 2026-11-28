@@ -94,7 +94,7 @@ Markdown keeps headings, nested lists, tables, code, inline formatting, links, a
 - Alignment and indented paragraphs
 - Table header rows and cell shading
 - Image sizes
-- Where each note container sits on the page, so a margin note stays beside its text
+- Where each note container sits on the page, so a margin note stays beside its text. Each is a `div class="outline"`: to edit such a page, add text inside a div, or it lands over the main text.
 
 An image OneNote hasn't downloaded yet shows as `[Image N: reason]`, with any text OneNote recognized in it. Open the page in OneNote desktop, then save it again.
 

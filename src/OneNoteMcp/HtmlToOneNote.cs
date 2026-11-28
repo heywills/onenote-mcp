@@ -71,7 +71,9 @@ public static partial class HtmlToOneNote
         var placed = body.Children.Where(IsPlacedOutline).ToList();
         placed.ForEach(e => e.Remove());
         var outlines = new List<XElement> { NewOutline(builder, body.ChildNodes, null, 0) };
-        outlines.AddRange(placed.Select((div, i) => NewOutline(builder, div.ChildNodes, div.GetAttribute("style"), i + 1)));
+        // A div without a z-index stacks above every one with
+        var topZ = placed.Select(div => ZIndex(div.GetAttribute("style"))).Max() ?? 0;
+        outlines.AddRange(placed.Select((div, i) => NewOutline(builder, div.ChildNodes, div.GetAttribute("style"), topZ + i + 1)));
 
         // QuickStyleDefs must sit together, before the content.
         var newDefs = builder.NewStyles.Select(style =>
@@ -97,6 +99,8 @@ public static partial class HtmlToOneNote
         return (builder.Embedded, builder.Linked);
     }
 
+    private static int? ZIndex(string? style) => int.TryParse(Css.Value(style, "z-index"), out var z) && z >= 0 ? z : null;
+
     /// <summary>A top-level <c>div class="outline"</c> with a <c>left</c> and <c>top</c> in points. Other divs, even with that class, are ordinary blocks.</summary>
     private static bool IsPlacedOutline(IElement e) =>
         e.LocalName == "div" && e.ClassList.Contains("outline")
@@ -115,7 +119,7 @@ public static partial class HtmlToOneNote
         var outline = new XElement(One + "Outline");
         if (Coordinate(Css.Value(style, "left")) is { } x && Coordinate(Css.Value(style, "top")) is { } y)
         {
-            var z = int.TryParse(Css.Value(style, "z-index"), out var index) && index >= 0 ? index : order;
+            var z = ZIndex(style) ?? order;
             outline.Add(new XElement(One + "Position", new XAttribute("x", x), new XAttribute("y", y), new XAttribute("z", z)));
             if (Points(Css.Value(style, "width")) is { } width)
             {
@@ -758,9 +762,13 @@ public static partial class HtmlToOneNote
     /// <summary>A position in points, which can be zero or negative. Null for anything else.</summary>
     private static string? Coordinate(string? value) => ParsePoints(value) is { } points ? Format(points) : null;
 
+    /// <remarks>
+    /// - Finite and within a million points: OneNote rejects a page with <c>NaN</c> or a huge coordinate.
+    /// </remarks>
     private static double? ParsePoints(string? value) =>
         value is not null && value.EndsWith("pt", StringComparison.OrdinalIgnoreCase)
         && double.TryParse(value[..^2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var points)
+        && double.IsFinite(points) && Math.Abs(points) <= 1_000_000
             ? points
             : null;
 

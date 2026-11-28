@@ -25,8 +25,8 @@ public static class PageHtml
         var (title, styles, repeatedTitle) = PageMarkdown.Parts(root);
         var writer = new Writer(styles, repeatedTitle, imageHtml ?? (img => ImageTag(img, null)), PageTags.Definitions(root));
         var outlines = root.Descendants(One + "Outline").ToList();
-        // A single outline flows as the page. Several keep their places, so a note stays beside its text.
-        var placed = outlines.Count > 1;
+        // A single outline flows as the page. Several with content keep their places, so a note stays beside its text.
+        var placed = outlines.Count(o => o.Descendants(One + "OE").Any()) > 1;
         foreach (var outline in outlines)
         {
             Place(writer, outline, placed, () =>
@@ -39,7 +39,7 @@ public static class PageHtml
         }
 
         // Images outside outlines, at their own places when the outlines have theirs
-        foreach (var img in root.Descendants(One + "Image").Where(i => i.Ancestors(One + "Outline").FirstOrDefault() is null))
+        foreach (var img in root.Descendants(One + "Image").Where(i => i.Ancestors(One + "Outline").FirstOrDefault() is null && CallbackId(i) is not null))
         {
             Place(writer, img, placed, () => writer.Image(img));
         }
@@ -90,11 +90,16 @@ public static class PageHtml
             return null;
         }
 
-        var size = element.Element(One + "Size");
-        var width = (string?)size?.Attribute("isSetByUser") == "true" && ToDouble(size?.Attribute("width")) is { } w ? $";width:{Points(w)}" : "";
+        var width = element.Element(One + "Size") is { } size && (string?)size.Attribute("isSetByUser") == "true" && ToDouble(size.Attribute("width")) is { } w
+            ? $";width:{Points(w)}"
+            : "";
         var z = int.TryParse((string?)position.Attribute("z"), out var index) ? $";z-index:{index}" : "";
         return $"position:absolute;left:{Points(x)};top:{Points(y)}{width}{z}";
     }
+
+    /// <summary>The ID the image tools fetch an image by, or null when OneNote gave none.</summary>
+    private static string? CallbackId(XElement img) =>
+        (string?)img.Element(One + "CallbackID")?.Attribute("callbackID") ?? (string?)img.Attribute("callbackID");
 
     private static string Points(double value) => $"{value.ToString("0.##", CultureInfo.InvariantCulture)}pt";
 
@@ -279,7 +284,7 @@ public static class PageHtml
 
         public void Image(XElement img)
         {
-            var id = (string?)img.Element(One + "CallbackID")?.Attribute("callbackID") ?? (string?)img.Attribute("callbackID");
+            var id = CallbackId(img);
             if (id is null)
             {
                 return;
