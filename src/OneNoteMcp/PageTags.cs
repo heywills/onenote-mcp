@@ -43,18 +43,27 @@ public static class PageTags
             .Where(t => definitions.ContainsKey((string?)t.Attribute("index") ?? ""))
             .Select(t => definitions[(string)t.Attribute("index")!] with { Done = (string?)t.Attribute("completed") == "true" })];
 
-    /// <summary>Markdown for an OE's tags: the checkbox (<c>[ ] </c> or <c>[x] </c>), or null, and the marker labels, such as <c>[Important] </c>.</summary>
-    public static (string? Box, string Labels) Markdown(IReadOnlyList<Tag> tags) =>
-        (tags.FirstOrDefault(t => t.IsCheckbox) is { } box ? (box.Done ? "[x] " : "[ ] ") : null,
-         string.Concat(tags.Where(t => !t.IsCheckbox).Select(t => $"[{PageMarkdown.EscapeBracketed(t.Name)}] ")));
+    /// <summary>Markdown for an OE's tags: the checkbox (<c>[ ] </c> or <c>[x] </c>), or null, and labels for the rest, such as <c>[Important] </c>.</summary>
+    /// <remarks>
+    /// - An item has one checkbox, so a second checkbox tag is a label too.
+    /// </remarks>
+    public static (string? Box, string Labels) Markdown(IReadOnlyList<Tag> tags)
+    {
+        var box = tags.FirstOrDefault(t => t.IsCheckbox);
+        return (box is null ? null : box.Done ? "[x] " : "[ ] ",
+            string.Concat(tags.Where(t => t != box).Select(t => $"[{PageMarkdown.EscapeBracketed(t.Name)}] ")));
+    }
 
     /// <summary>HTML for an OE's tags, before its text.</summary>
+    /// <remarks>
+    /// - A label keeps its done state in <c>data-tag-done</c>, for a checkbox tag with a symbol not in <see cref="Tag.IsCheckbox"/>.
+    /// </remarks>
     public static string Html(IReadOnlyList<Tag> tags) => string.Concat(tags.Select(t =>
     {
         var data = $" data-tag=\"{Encode(t.Name)}\" data-tag-type=\"{t.Type}\" data-tag-symbol=\"{t.Symbol}\"";
         return t.IsCheckbox
             ? $"<input type=\"checkbox\" disabled{(t.Done ? " checked" : "")}{data}> "
-            : $"<span class=\"tag\"{data}>[{Encode(t.Name)}]</span> ";
+            : $"<span class=\"tag\"{data}{(t.Done ? " data-tag-done=\"true\"" : "")}>[{Encode(t.Name)}]</span> ";
     }));
 
     /// <summary>Adds the <c>Tag</c>s to an OE, first, where the schema puts them.</summary>

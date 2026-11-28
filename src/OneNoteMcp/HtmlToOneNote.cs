@@ -88,24 +88,7 @@ public static partial class HtmlToOneNote
             return def;
         }).ToList();
 
-        if (defs.Count > 0)
-        {
-            defs[^1].AddAfterSelf(newDefs);
-        }
-        else
-        {
-            page.AddFirst(newDefs);
-        }
-
-        // TagDefs come first, before the QuickStyleDefs
-        if (tagDefs.Count > 0)
-        {
-            tagDefs[^1].AddAfterSelf(builder.NewTags);
-        }
-        else
-        {
-            page.AddFirst(builder.NewTags);
-        }
+        AddDefinitions(page, tagDefs.LastOrDefault(), builder.NewTags, defs.LastOrDefault(), newDefs);
 
         // OneNote rejects an Outline with nothing in it
         if (children.HasElements)
@@ -114,6 +97,31 @@ public static partial class HtmlToOneNote
         }
 
         return (builder.Embedded, builder.Linked);
+    }
+
+    /// <summary>Adds new TagDefs and QuickStyleDefs in schema order: TagDefs, then QuickStyleDefs, then the rest.</summary>
+    /// <param name="lastTag">The page's last TagDef, or null</param>
+    /// <param name="lastStyle">The page's last QuickStyleDef, or null</param>
+    private static void AddDefinitions(XElement page, XElement? lastTag, List<XElement> newTags, XElement? lastStyle, List<XElement> newStyles)
+    {
+        if ((lastStyle ?? lastTag) is { } beforeStyles)
+        {
+            beforeStyles.AddAfterSelf(newStyles);
+        }
+        else
+        {
+            page.AddFirst(newStyles);
+        }
+
+        // After the page's TagDefs, which are still ahead of every QuickStyleDef
+        if (lastTag is not null)
+        {
+            lastTag.AddAfterSelf(newTags);
+        }
+        else
+        {
+            page.AddFirst(newTags);
+        }
     }
 
     /// <summary>The document's <c>&lt;title&gt;</c>, or null when it has none.</summary>
@@ -266,8 +274,9 @@ public static partial class HtmlToOneNote
         /// <summary>Removes the tag checkboxes and labels at the start of a block, and returns their tags.</summary>
         /// <remarks>
         /// - onenote_get_page's HTML marks each with <c>data-tag</c>. A Markdown task item's checkbox has none, and is a To Do.
+        /// - Other HTML's checkboxes without <c>data-tag</c> aren't tags.
         /// </remarks>
-        private static List<Tag> TakeTags(IElement block)
+        private List<Tag> TakeTags(IElement block)
         {
             var tags = new List<Tag>();
             foreach (var node in block.ChildNodes.ToList())
@@ -289,12 +298,13 @@ public static partial class HtmlToOneNote
             return tags;
         }
 
-        private static Tag? TagOf(IElement e) => e.LocalName switch
+        private Tag? TagOf(IElement e) => e.LocalName switch
         {
-            "input" when e.GetAttribute("type") == "checkbox" => e.HasAttribute("data-tag")
-                ? DataTag(e, e.HasAttribute("checked"), Tag.ToDo(false))
-                : Tag.ToDo(e.HasAttribute("checked")),
-            "span" when e.HasAttribute("data-tag") => DataTag(e, false, new Tag("Tag", 0, 0, false)),
+            "input" when string.Equals(e.GetAttribute("type"), "checkbox", StringComparison.OrdinalIgnoreCase) && e.HasAttribute("data-tag") =>
+                DataTag(e, e.HasAttribute("checked"), Tag.ToDo(false)),
+            "input" when string.Equals(e.GetAttribute("type"), "checkbox", StringComparison.OrdinalIgnoreCase) && fromMarkdown =>
+                Tag.ToDo(e.HasAttribute("checked")),
+            "span" when e.HasAttribute("data-tag") => DataTag(e, e.GetAttribute("data-tag-done") == "true", new Tag("Tag", 0, 0, false)),
             _ => null,
         };
 
@@ -600,9 +610,9 @@ public static partial class HtmlToOneNote
         /// </remarks>
         private void ListItem(IElement li, XElement parent, string listKind, (int Value, string Format) number)
         {
-            // A loose item's checkbox sits in its first paragraph
+            // A loose item's checkbox sits in its first paragraph, with no item text before it
             var tags = TakeTags(li);
-            if (tags.Count == 0 && li.FirstElementChild is { LocalName: "p" } first)
+            if (tags.Count == 0 && li.FirstElementChild is { LocalName: "p" } first && string.IsNullOrWhiteSpace(InlineHtml(li.ChildNodes.Where(IsInlineNode))))
             {
                 tags = TakeTags(first);
             }

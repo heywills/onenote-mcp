@@ -192,8 +192,9 @@ public static partial class PageMarkdown
 
             var quote = quoteColumn is not null;
             var prefix = QuotePrefix(quoteColumn, indent);
-            var marker = Marker(oe.Element(One + "List"), indent, prefix, number);
             var hasText = oe.Element(One + "T") is not null && oe != repeatedTitle;
+            var tags = PageTags.Markdown(PageTags.Of(oe, tagDefinitions));
+            var marker = Marker(oe.Element(One + "List") ?? (IsTaskParagraph(oe, styleName, hasText, tags.Box) ? TaskBullet : null), indent, prefix, number);
 
             // A list item with no text, such as a bullet holding only an image, still gets its marker line.
             var listItem = marker is not null && oe != repeatedTitle;
@@ -205,7 +206,7 @@ public static partial class PageMarkdown
 
             if (hasText)
             {
-                Text(oe, (styleName, styleItalic), indent, prefix, marker, quote, PageTags.Markdown(PageTags.Of(oe, tagDefinitions)));
+                Text(oe, (styleName, styleItalic), indent, prefix, marker, quote, tags);
             }
 
             Children(oe, childIndent, quoteColumn);
@@ -216,6 +217,17 @@ public static partial class PageMarkdown
                 _bareMarker = false;
             }
         }
+
+        /// <summary>The bullet a checkbox paragraph gets, since Markdown checkboxes live in lists</summary>
+        private static readonly XElement TaskBullet = new(One + "List", new XElement(One + "Bullet"));
+
+        /// <summary>A plain paragraph with a checkbox tag, which becomes a <c>- [ ]</c> task item.</summary>
+        /// <remarks>
+        /// - Headings, code, and blank lines drop the checkbox: Markdown has no checkbox for them.
+        /// </remarks>
+        private static bool IsTaskParagraph(XElement oe, string styleName, bool hasText, string? box) =>
+            box is not null && hasText && styleName != "code" && !Regex.IsMatch(styleName, "^h[1-6]$")
+            && CleanText(string.Concat(oe.Elements(One + "T").Select(t => t.Value))).Trim().Length > 0;
 
         /// <summary>The indent, with <c>"> "</c> at the quote's column when quoted</summary>
         private static string QuotePrefix(string? quoteColumn, string indent) =>
@@ -252,8 +264,9 @@ public static partial class PageMarkdown
 
         /// <param name="tags">The OE's checkbox and marker labels, from <see cref="PageTags.Markdown"/></param>
         /// <remarks>
-        /// - A checkbox makes a task item. A plain paragraph with one becomes a <c>- [ ]</c> item, since Markdown checkboxes live in lists.
-        /// - Code lines and blank lines drop their tags.
+        /// - A checkbox makes a task item. A plain paragraph with one already has a bullet marker, from <see cref="IsTaskParagraph"/>.
+        /// - Code lines and blank lines drop their tags, and headings drop the checkbox.
+        /// - An untagged item whose text starts with <c>[ ]</c> or <c>[x]</c> is escaped, or it would read back as a task.
         /// </remarks>
         private void Text(XElement oe, (string Name, bool Italic) style, string indent, string prefix, string? marker, bool quote, (string? Box, string Labels) tags)
         {
@@ -274,7 +287,8 @@ public static partial class PageMarkdown
             var heading = Regex.Match(style.Name, "^h([1-6])$");
             if (marker is not null)
             {
-                ListItem(prefix, marker, tags.Box + EscapeLineStart(text), quote);
+                var body = EscapeLineStart(text);
+                ListItem(prefix, marker, (tags.Box ?? (TaskMarker().IsMatch(body) ? @"\" : "")) + body, quote);
             }
             else if (text.Length == 0)
             {
@@ -282,11 +296,7 @@ public static partial class PageMarkdown
             }
             else if (heading.Success)
             {
-                Paragraph(indent, $"{new string('#', int.Parse(heading.Groups[1].Value))} {tags.Box}{EscapeClosingHashes(text)}", false);
-            }
-            else if (tags.Box is not null)
-            {
-                Paragraph(prefix, $"- {tags.Box}{EscapeLineStart(text)}", quote);
+                Paragraph(indent, $"{new string('#', int.Parse(heading.Groups[1].Value))} {EscapeClosingHashes(text)}", false);
             }
             else
             {
@@ -993,4 +1003,8 @@ public static partial class PageMarkdown
     /// <summary>OneNote's number text: <c>1.</c> or <c>1)</c></summary>
     [GeneratedRegex(@"^(\d+)[.)]$")]
     private static partial Regex NumberMarker();
+
+    /// <summary>Text that Markdown would read as a task item's checkbox</summary>
+    [GeneratedRegex(@"^\[[ xX]\]")]
+    private static partial Regex TaskMarker();
 }

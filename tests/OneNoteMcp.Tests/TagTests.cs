@@ -28,7 +28,57 @@ public class TagTests
 
     [Fact]
     public void WritesCheckboxesAsTaskItemsAndOtherTagsAsLabels() =>
-        Assert.Equal("# P\n\n- [x] Call Ann\n\n[Important] Ship by Friday\n\nPlain\n\n- [ ] Draft\n\n- [x] Mike", PageMarkdown.Convert(TaggedPage).Markdown);
+        Assert.Equal("# P\n\n- [x] Call Ann\n\n[Important] Ship by Friday\n\nPlain\n\n- [ ] Draft\n- [x] Mike", PageMarkdown.Convert(TaggedPage).Markdown);
+
+    [Fact]
+    public void KeepsTaskItemsApartAndIndentsTheirChildren()
+    {
+        var page = $"""
+            <one:Page xmlns:one="{One}" name="P"><one:TagDef index="0" type="0" symbol="3" name="To Do"/>
+              <one:QuickStyleDef index="1" name="h2"/><one:Title/>
+              <one:Outline><one:OEChildren>
+                <one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T>Bullet</one:T></one:OE>
+                <one:OE><one:T></one:T></one:OE>
+                <one:OE><one:Tag index="0" completed="false"/><one:T>Task</one:T>
+                  <one:OEChildren><one:OE><one:T>Detail</one:T></one:OE></one:OEChildren></one:OE>
+                <one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T>[x] reviewed</one:T></one:OE>
+                <one:OE quickStyleIndex="1"><one:Tag index="0" completed="true"/><one:T>Heading</one:T></one:OE>
+              </one:OEChildren></one:Outline>
+            </one:Page>
+            """;
+
+        // The blank line keeps the bullet and the task in separate lists, the detail stays under its task,
+        // untagged "[x]" text stays text, and a heading drops its checkbox
+        Assert.Equal("# P\n\n- Bullet\n\n* [ ] Task\n\n  Detail\n\n* \\[x] reviewed\n\n## Heading", PageMarkdown.Convert(page).Markdown);
+    }
+
+    [Fact]
+    public void WritesASecondCheckboxAsALabel() =>
+        Assert.Equal("[ ] ", PageTags.Markdown([Tag.ToDo(false), new("Discuss with", 20, 94, true)]).Box);
+
+    [Fact]
+    public void KeepsTheDoneStateOfAnyTagInHtml()
+    {
+        var html = PageTags.Html([new Tag("Client request", 7, 50, true)]);
+        var page = Create($"<p>{html}Text</p>", fromMarkdown: false);
+
+        Assert.Equal("true", page.Descendants(One + "Tag").Single().Attribute("completed")!.Value);
+    }
+
+    [Fact]
+    public void IgnoresCheckboxesInOtherHtml() =>
+        Assert.Empty(Create("<ul><li><input type=\"CHECKBOX\" checked> Pasted</li></ul>", fromMarkdown: false).Descendants(One + "Tag"));
+
+    [Fact]
+    public void AddsStylesAfterTagsOnAPageWithoutStyles()
+    {
+        var page = new XElement(One + "Page",
+            new XElement(One + "TagDef", new XAttribute("index", "0"), new XAttribute("type", "1"), new XAttribute("symbol", "13"), new XAttribute("name", "Important")),
+            new XElement(One + "Title"));
+        HtmlToOneNote.AddToPage(page, MarkdownToOneNote.ToHtml("## Heading\n\n- [ ] Task"), fromMarkdown: true);
+
+        Assert.Equal(["TagDef", "TagDef", "QuickStyleDef", "Title"], page.Elements().Take(4).Select(e => e.Name.LocalName));
+    }
 
     [Fact]
     public void WritesTagsAsCheckboxesAndLabelsInHtml()
@@ -78,7 +128,7 @@ public class TagTests
     }
 
     /// <summary>Markdown as onenote_get_page writes it reads back the same.</summary>
-    internal const string TaskMarkdown = "- [ ] Open\n\n- [x] Done\n\n1. [x] Numbered\n\n[Important] A label stays text";
+    internal const string TaskMarkdown = "- [ ] Open\n- [x] Done\n\n1. [x] Numbered\n\n[Important] A label stays text";
 
     [Fact]
     public void RoundTripsTaskItems()
