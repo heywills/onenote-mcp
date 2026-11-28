@@ -1,10 +1,56 @@
 # OneNote MCP server
 
-MCP server that reads, searches, creates, and deletes pages in every notebook open in OneNote desktop, including SharePoint and OneDrive notebooks. It drives the desktop app through COM, so it uses the app's own sign-in: no Entra app, no API keys.
+An MCP server that lets AI agents read, search, create, and delete pages in OneNote desktop notebooks.
+
+## Background
+
+Agents can't see your OneNote notebooks. The Microsoft Graph API can reach them, but it needs an Entra app registration and admin consent, which many organizations won't grant. MCP servers that return a whole page in the response also lose most of its formatting and all of its images, and fill the agent's context.
+
+## Solution
+
+This server drives OneNote desktop through COM, so it uses the app's own sign-in. Every notebook open in OneNote works: local, OneDrive, and SharePoint.
+
+It's built for agents with file access:
+- Page reads save to a Markdown or HTML file, with the page's images in a folder next to it.
+- Page creates read a Markdown or HTML file, and embed its local images.
+- A saved page creates back as the same page, so an agent can save a page, edit the file, and create the result.
 
 Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT) and ported from Python to .NET.
 
-## Tools
+## Compatibility
+
+- Windows with OneNote desktop from Microsoft 365. The Store version of OneNote has no COM API.
+- .NET 10 SDK, to build
+- Any MCP client that runs stdio servers. The steps below use Claude Code.
+
+## Installation
+
+1. Clone the repo and build:
+   ```powershell
+   dotnet publish src/OneNoteMcp -c Release -o publish
+   ```
+   The build references OneNote's interop assembly, which Office installs, so it builds only where OneNote desktop is installed.
+2. Register the server at user scope:
+   ```powershell
+   claude mcp add onenote --scope user -- "C:/path/to/onenote-mcp/publish/OneNoteMcp.exe"
+   ```
+   For another client, add the exe as a stdio server:
+   ```json
+   { "mcpServers": { "onenote": { "command": "C:/path/to/onenote-mcp/publish/OneNoteMcp.exe" } } }
+   ```
+3. Restart the client and ask: `Use the onenote MCP server to list my notebooks.`
+
+OneNote starts on the first call if it's closed.
+
+## Usage
+
+Ask in plain language. For example:
+- `Save my "Weekly 1:1" page to C:\work\one-on-one.md`
+- `Find my notes about the website launch`
+- `Create a page in Work/Projects from C:\work\plan.md`
+- `Save this page as HTML, fix the typos, and create it as a new page`
+
+### Tools
 
 | Tool | Purpose |
 |---|---|
@@ -12,89 +58,101 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_list_sections` | Sections in a notebook, including section groups |
 | `onenote_list_pages` | Pages in a section |
 | `onenote_get_notebook_tree` | Notebooks, groups, sections, and page titles |
-| `onenote_get_page` | Page as Markdown or HTML: headings, nested lists, tables, code blocks, inline formatting, and images |
-| `onenote_get_page_by_link` | Page from a "Copy link to page" link (`onenote:` or web link) |
-| `onenote_get_page_raw` | Page as OneNote XML |
-| `onenote_get_page_images` | Images on a page |
-| `onenote_get_image` | One image by callback ID |
 | `onenote_search` | Search all notebooks |
 | `onenote_search_in_notebook` | Search one notebook |
-| `onenote_create_page` | New page from HTML: headings, nested lists, tables, code, images. Reads back the HTML `onenote_get_page` saves. |
-| `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown, images included. |
-| `onenote_delete_page` | Moves a page to Deleted Pages. Subpages stay. |
+| `onenote_get_page` | Save a page as Markdown or HTML |
+| `onenote_get_page_by_link` | Save a page from a "Copy link to page" link |
+| `onenote_get_page_raw` | Save a page as OneNote XML, for debugging |
+| `onenote_get_page_images` | Images on a page, for the agent to see |
+| `onenote_get_image` | One image, by callback ID |
+| `onenote_create_page` | New page from HTML |
+| `onenote_create_page_from_markdown` | New page from Markdown |
+| `onenote_delete_page` | Move a page to Deleted Pages |
 
-`onenote_get_page`, `onenote_get_page_by_link`, and `onenote_get_page_raw` save to `outputPath`, an absolute file path the agent names, and return the path. The Markdown tools save images full size to a folder next to the page and link them: `page.md` gets `page_images`. `inline=true` returns the page in the response instead, with `[Image N]` and callback IDs for the image tools.
+### Reading pages
 
-`format=html` keeps what Markdown drops:
+The read tools save to `outputPath`, an absolute file path the agent names, and return the path. Images go full size into a folder next to the page: `page.md` gets `page_images`. Pass `inline=true` to get the page in the response instead, with callback IDs for the image tools.
+
+Markdown keeps headings, nested lists, tables, code, inline formatting, links, and images. `format=html` also keeps:
 - Colors, highlights, fonts, and sizes
 - Alignment and indented paragraphs
 - Table header rows and cell shading
 - Image sizes
 
-`onenote_create_page` reads it back, with the title from `<title>`. Ink and paragraph spacing aren't kept. OneNote also rewrites some markup (`#FF0000` becomes `red`) and drops trailing spaces.
+An image OneNote hasn't downloaded yet shows as `[Image N: reason]`, with any text OneNote recognized in it. Open the page in OneNote desktop, then save it again.
+
+### Creating pages
+
+The create tools take the body inline or from `inputPath`, an absolute UTF-8 file path. The title comes from the `title` parameter, the Markdown's leading `# ` heading, or the HTML's `<title>`.
+
+Local images are embedded:
+- From a file: images inside the file's folder, by relative path
+- Inline: absolute paths too
+- Images over 10 MB are shrunk, and a page holds up to 50 MB of images.
+
+Web images, network shares, files outside the folder, and images inside headings, links, or table headers stay links. The result counts both.
+
+### Tags
 
 Pages keep their OneNote tags:
-- Checkbox tags (To Do, Attendance) are task items in Markdown, `- [ ]` and `- [x]`. Creating a page from Markdown turns task items into To Do checkboxes.
-- Other tags (Important, Question) are their name in brackets, such as `[Important]`. Creating from Markdown keeps that as text.
-- HTML keeps tags as a checkbox or label with `data-tag` attributes, so `onenote_create_page` restores them.
-- Both drop tags on plain code lines and on paragraphs that hold only an image. Markdown also drops tags in table cells, checkboxes on headings, and labels on empty paragraphs.
-- A bulleted To Do comes back from Markdown without its bullet: Markdown can't tell it from a To Do paragraph.
+- Checkbox tags (To Do, Attendance) are task items in Markdown: `- [ ]` and `- [x]`. Creating from Markdown turns task items into To Do checkboxes.
+- Other tags (Important, Question) are labels in brackets, such as `[Important]`. Creating from Markdown keeps them as text.
+- HTML keeps every tag, with `data-tag` attributes, so `onenote_create_page` restores them.
 
-`onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path. They embed local images:
-- From a file: only images inside the file's folder, by relative path
-- Inline: absolute paths too
-- Web URLs, network shares and mapped network drives, links that lead out of the file's folder or to a network, files over 50 MB, and other types stay links. So do all images of a file on a share.
-- An image inside a heading, a link, formatting, or a table header stays a link.
-- Images over 10 MB are shrunk. Images that would push a page past 50 MB stay links.
+### Search
 
-## Requirements
+Search matches page titles that contain every query word, then page text through Windows Search. Title matches come first, then text matches, each newest first, up to `maxResults` (20).
+- Title search finds new pages that Windows Search hasn't indexed yet.
+- A query with `OR`, `NOT`, `-word`, `+word`, or a property filter such as `author:x` searches text only.
+- Deleted pages are skipped.
 
-- Windows with OneNote desktop (Microsoft 365), not the Store version. COM starts OneNote if it's closed.
-- .NET 10 SDK
+### Deleting pages
 
-## Setup
+`onenote_delete_page` moves a page to its notebook's Deleted Pages, where OneNote keeps it for 60 days. It refuses sections and notebooks. The page's subpages stay in the section.
 
-1. Build:
-   ```powershell
-   dotnet publish src/OneNoteMcp -c Release -o publish
-   ```
-2. Register at user scope:
-   ```powershell
-   claude mcp add onenote --scope user -- "C:/path/to/onenote-mcp/publish/OneNoteMcp.exe"
-   ```
-3. Restart Claude Code and ask: `Use the onenote MCP server to list my notebooks.`
+## Limits
 
-## Notes
+Markdown can't hold everything a OneNote page can:
+- Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
+- An image in a paragraph splits it: text, image, text. In a list item, it moves below the item text.
+- A hard line break splits a paragraph in two. OneNote drops line breaks inside a paragraph.
+- Headings, tables, and code inside a quote lose the quote. Nested quotes flatten to one level.
+- Code blocks lose their language, and OneNote stores a tab in code as 8 spaces.
+- Numbered lists start at 1. Separate lists alternate between `1.` and `1)` in OneNote, so each restarts.
+- Tags in table cells, checkboxes on headings, and a To Do's bullet don't survive.
 
-- Search matches titles containing every query word, then text through Windows Search (indexed pages only). Skips deleted pages. A query with `OR`, `NOT`, `-word`, `+word`, or a property filter such as `author:x` searches text only.
-- Images OneNote hasn't downloaded yet return an error from the image tools, and show as `[Image N: reason]` in saved pages, with any text OneNote recognized in the image. Open the page in OneNote desktop, then retry.
-- Markdown that OneNote can't hold:
-  - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
-  - Numbered lists start at 1. OneNote numbers lists itself, so separate lists alternate between `1.` and `1)` in OneNote to restart.
-  - A hard line break splits a paragraph in two, and becomes a space in a list item. OneNote drops line breaks inside a paragraph.
-  - An image in a paragraph splits it: text, image, text. In a list item, it moves below the item text. Code blocks lose their language, and OneNote stores a tab in code as 8 spaces.
-  - Headings, tables, and code inside a quote lose the quote. Nested quotes flatten to one level.
-  - Bold that covers a whole table header cell is dropped, since the header row is already bold. So is italic that covers a whole h4 or h6 heading, since those styles are italic.
+Both formats drop ink and paragraph spacing, and tags on code lines. OneNote also rewrites some markup (`#FF0000` becomes `red`) and drops trailing spaces.
 
-## Tests
+## Troubleshooting
+
+- **"Section not found. Is the notebook open in OneNote desktop?"**: open the notebook in OneNote, then retry.
+- **An image tool says the image isn't downloaded**: open the page in OneNote desktop so it downloads, then retry.
+- **An error ends with a code, such as "The page is read-only (0x8004200C)"**: it comes from OneNote's COM API. That one means the page is in Deleted Pages.
+- **`dotnet publish` can't copy files**: the MCP client is running the server, and Windows locks the exe. Close the client, or publish to another folder and point the client at it.
+
+## How it works
+
+- Calls OneNote through `Application2Class` in OneNote's interop assembly. Late binding fails in 64-bit .NET, because OneNote registers its type library for 32-bit only.
+- COM calls run one at a time: OneNote handles one call at a time.
+- Converts between OneNote's page XML and Markdown (Markdig) or HTML (AngleSharp).
+
+## Contributing
+
+Run the tests:
 
 ```powershell
 dotnet test
 ```
 
-Live tests run against OneNote desktop when `ONENOTE_LIVE_SECTION` is set. They create pages in that section and delete them permanently. The delete test leaves its page in Deleted Pages, because OneNote refuses deletes from there.
+Live tests run against OneNote desktop when `ONENOTE_LIVE_SECTION` names a test section. They create pages there and delete them permanently. The delete test leaves its page in Deleted Pages, because OneNote refuses deletes from there.
 
 ```powershell
 $env:ONENOTE_LIVE_SECTION = "My Notebook/Test section"; dotnet test
 ```
 
-Set `ONENOTE_LIVE_IMAGE_LINK` to a "Copy link to page" link to also test images.
+Set `ONENOTE_LIVE_IMAGE_LINK` to a "Copy link to page" link for a page with images to also test images.
 
-## How it works
-
-- Calls OneNote through `Application2Class` in OneNote's interop assembly, which Office installs. Late binding fails in 64-bit .NET because OneNote registers its type library for 32-bit only.
-- The build references that assembly from the GAC, so it builds only where OneNote desktop is installed.
-- COM errors come back as tool errors with OneNote's error name and code.
+The build treats code complexity analyzer findings as warnings. Keep it at 0 warnings.
 
 ## License
 
