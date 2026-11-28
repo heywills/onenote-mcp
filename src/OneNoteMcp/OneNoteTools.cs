@@ -34,11 +34,12 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     private const string SearchDescription = """
         Matches page titles that hold every query word, then page text through Windows Search, which finds indexed pages only.
         Title matches come first (in_title), then text matches, each newest first. Skips Deleted Pages. total counts all matches.
+        title_search is false when OneNote couldn't list the pages, such as for an offline notebook.
         """;
 
     private const string MaxResultsDescription = "Most results to return";
 
-    private const string InlineDescription ="Return the content in the response instead of saving a file. Don't pass outputPath with it.";
+    private const string InlineDescription = "Return the content in the response instead of saving a file. Don't pass outputPath with it.";
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -477,10 +478,25 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
             throw new McpException("maxResults must be at least 1");
         }
 
-        var results = RankSearchResults(query,
-            ParseSearchResults(oneNote.GetHierarchy(notebookId, HierarchyScope.hsPages)),
-            ParseSearchResults(oneNote.FindPages(query, notebookId)));
-        return ToJson(new { Query = query, Total = results.Count, Results = results.Take(maxResults) });
+        var pages = AllPages(notebookId);
+        var results = RankSearchResults(query, pages, ParseSearchResults(oneNote.FindPages(query, notebookId)));
+        return ToJson(new { Query = query, TitleSearch = pages is not null, Total = results.Count, Results = results.Take(maxResults) });
+    }
+
+    /// <summary>Every page in the scope, for title search. Null when OneNote can't list them.</summary>
+    /// <remarks>
+    /// - A notebook that isn't downloaded or is offline can fail the listing, but text search may still work.
+    /// </remarks>
+    private IReadOnlyList<SearchResult>? AllPages(string notebookId)
+    {
+        try
+        {
+            return ParseSearchResults(oneNote.GetHierarchy(notebookId, HierarchyScope.hsPages));
+        }
+        catch (McpException)
+        {
+            return null;
+        }
     }
 
     private ImageContentBlock Image(string pageId, string callbackId, int maxSizeKb)

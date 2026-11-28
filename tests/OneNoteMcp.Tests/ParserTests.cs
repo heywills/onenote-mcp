@@ -178,5 +178,14 @@ public class ParserTests
 
         Assert.Equal(["t-new", "t-old", "x-new", "x-old"], ranked.Select(r => r.PageId));
         Assert.Equal([true, true, false, false], ranked.Select(r => r.InTitle));
+        Assert.Equal(["x-new", "t-new", "x-old"], Hierarchy.RankSearchResults("nick 1:1", null, found).Select(r => r.PageId));
     }
+
+    [Theory]
+    [InlineData("\"project plan\"", true)]
+    [InlineData("proj* OR plan", true)]
+    [InlineData("project NOT", true)]
+    [InlineData("OR \"\" *", false)]
+    public void MatchesTitlesWithoutSearchSyntax(string query, bool matches) =>
+        Assert.Equal(matches, Hierarchy.RankSearchResults(query, [new("p", "Project plan", "N", "S", "2026")], []).Count == 1);
 }
