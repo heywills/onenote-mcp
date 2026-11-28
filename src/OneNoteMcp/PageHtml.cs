@@ -141,7 +141,7 @@ public static class PageHtml
                     break;
                 case "pre":
                     // A line that holds only an image, table, or file isn't a code line
-                    var lines = oes.Where(oe => oe.Element(One + "T") is not null)
+                    var lines = oes.Where(oe => oe.Element(One + "T") is not null || !oe.Elements().Any(c => c.Name.LocalName is "Image" or "Table" or "InsertedFile"))
                         .Select(oe => Encode(PageMarkdown.CleanText(string.Concat(oe.Elements(One + "T").Select(t => t.Value)))))
                         .ToList();
                     if (lines.Count > 0)

@@ -22,6 +22,7 @@ internal static class SafeHtml
     private static readonly HashSet<string> BlockedSchemes = new(StringComparer.OrdinalIgnoreCase)
     {
         "javascript", "vbscript", "data", "ms-msdt", "search-ms", "search", "ms-officecmd",
+        "ms-appinstaller", "ms-cxh", "ms-cxh-full", "its", "ms-its", "mk", "hcp",
     };
 
     /// <summary>The safe part of <paramref name="html"/>.</summary>

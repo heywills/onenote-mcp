@@ -210,6 +210,14 @@ public class HtmlToOneNoteTests
         Assert.Equal(["x pic d m"],Texts(Convert("<p><a href=\"java&#9;script:alert(1)\">x</a> <img src=\"JavaScript:y\" alt=\"pic\"> <a href=\"data:text/html,x\">d</a> <a href=\"MS-MSDT:/id x\">m</a></p>")));
 
     [Fact]
+    public void AddsNothingForAnEmptyIndent()
+    {
+        var page = Convert("<pre>A</pre><div class=\"indent\"></div><pre>C</pre>");
+        Assert.DoesNotContain(page.Descendants(One + "OEChildren"), c => c.Parent!.Name == One + "OE");
+        Assert.Equal(["A", "", "C"], Texts(page));
+    }
+
+    [Fact]
     public void KeepsCodeSplitByAnIndentAsOneBlock() =>
         Assert.Equal(["A", "B", "i", "C"], Texts(Convert("<pre>A\nB</pre><div class=\"indent\"><p>i</p></div><pre>C</pre>")));
 

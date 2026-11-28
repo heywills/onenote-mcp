@@ -219,6 +219,10 @@ public class MarkdownTests
             Read("""<one:OE><one:T><![CDATA[<a href="javascript:alert(1)">x</a> and <span style='font-family:Consolas'><a href="vbscript:y">y</a> <a href="https://x.test">z</a></span>]]></one:T></one:OE>"""));
 
     [Fact]
+    public void KeepsMonospaceScriptLinksAsCode() =>
+        Assert.Equal("# P\n\n`*a* <b>`", Read("""<one:OE><one:T><![CDATA[<a href="javascript:x" style="font-family:Consolas">*a* &lt;b&gt;</a>]]></one:T></one:OE>"""));
+
+    [Fact]
     public void JoinsTextRunsOfOneParagraph()
     {
         const string bullet = "<one:List><one:Bullet bullet=\"2\"/></one:List>";

@@ -611,9 +611,14 @@ public static partial class PageMarkdown
             return inner; // a code span can't hold a link: keep the text
         }
 
-        if (string.IsNullOrEmpty(href) || !SafeHtml.IsSafeHref(href))
+        if (string.IsNullOrEmpty(href))
         {
-            return inner; // an anchor, or a script link
+            return inner; // an anchor, not a link
+        }
+
+        if (!SafeHtml.IsSafeHref(href))
+        {
+            return code ? CodeSpan(inner.Trim()) : inner; // a script link: its text only
         }
 
         if (a.TextContent.Trim() == href && AutolinkUrl().IsMatch(href))

@@ -385,14 +385,14 @@ public static partial class HtmlToOneNote
         {
             if (e.LocalName == "div" && e.ClassList.Contains("indent") && parent.Elements(One + "OE").LastOrDefault() is { } owner)
             {
-                var children = owner.Element(One + "OEChildren");
-                if (children is null)
+                // An empty indent adds nothing: OneNote may reject an empty OEChildren
+                var children = owner.Element(One + "OEChildren") ?? new XElement(One + "OEChildren");
+                Blocks(e.ChildNodes, children);
+                if (children.Parent is null && children.HasElements)
                 {
-                    children = new XElement(One + "OEChildren");
                     owner.Add(children);
                 }
 
-                Blocks(e.ChildNodes, children);
                 return;
             }
 
