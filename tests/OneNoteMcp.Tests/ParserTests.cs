@@ -183,9 +183,13 @@ public class ParserTests
 
     [Theory]
     [InlineData("\"project plan\"", true)]
-    [InlineData("proj* OR plan", true)]
-    [InlineData("project NOT", true)]
-    [InlineData("OR \"\" *", false)]
+    [InlineData("proj* AND plan", true)]
+    [InlineData("project NOT plan", false)]
+    [InlineData("project NOT draft", false)]
+    [InlineData("project -draft", false)]
+    [InlineData("project OR plan", false)]
+    [InlineData("(project) plan", false)]
+    [InlineData("\"\" * AND", false)]
     public void MatchesTitlesWithoutSearchSyntax(string query, bool matches) =>
         Assert.Equal(matches, Hierarchy.RankSearchResults(query, [new("p", "Project plan", "N", "S", "2026")], []).Count == 1);
 }

@@ -40,28 +40,40 @@ public static class Hierarchy
     /// <summary>
     /// Title matches first, then text matches from Windows Search, each newest first.
     /// </summary>
-    /// <param name="query">The Windows Search query. Its title words leave out quotes, a trailing <c>*</c>, and <c>AND</c>, <c>OR</c>, <c>NOT</c>.</param>
+    /// <param name="query">The Windows Search query</param>
     /// <param name="pages">Every page in the search scope, from the hierarchy. Null for text matches only.</param>
     /// <param name="found">Windows Search's results</param>
     /// <remarks>
     /// - Title search finds pages the index misses, such as new pages.
-    /// - A title matches when it holds every query word, ignoring case.
+    /// - A title matches when it holds every word from <see cref="TitleWords"/>, ignoring case.
     /// </remarks>
     public static IReadOnlyList<SearchResult> RankSearchResults(string query, IEnumerable<SearchResult>? pages, IEnumerable<SearchResult> found)
     {
-        var words = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-            .Where(w => w is not ("AND" or "OR" or "NOT"))
-            .Select(w => w.Trim('"').TrimEnd('*').Trim('"'))
-            .Where(w => w.Length > 0)
-            .ToList();
-        // No words left would match every title
-        var titles = (words.Count == 0 ? [] : pages ?? [])
-            .Where(p => words.All(w => p.PageName.Contains(w, StringComparison.OrdinalIgnoreCase)))
+        var words = TitleWords(query);
+        var titles = (words is null ? [] : pages ?? [])
+            .Where(p => words!.All(w => p.PageName.Contains(w, StringComparison.OrdinalIgnoreCase)))
             .Select(p => p with { InTitle = true })
             .OrderByDescending(p => p.LastModified, StringComparer.Ordinal)
             .ToList();
         var text = found.OrderByDescending(p => p.LastModified, StringComparer.Ordinal);
         return [.. titles.Concat(text).DistinctBy(p => p.PageId)];
+    }
+
+    /// <summary>The words a title must hold, without quotes, a trailing <c>*</c>, or <c>AND</c>. Null when titles aren't searched.</summary>
+    /// <remarks>
+    /// - A query with <c>OR</c>, <c>NOT</c>, a <c>-word</c>, or parentheses is text search only. Matching those in titles would need a parser for the Windows Search syntax.
+    /// </remarks>
+    public static IReadOnlyList<string>? TitleWords(string query)
+    {
+        var words = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Any(w => w is "OR" or "NOT" || w.StartsWith('-') || w.IndexOfAny(['(', ')']) >= 0))
+        {
+            return null;
+        }
+
+        var cleaned = words.Where(w => w != "AND").Select(w => w.Trim('"').TrimEnd('*').Trim('"')).Where(w => w.Length > 0).ToList();
+        // No words left would match every title
+        return cleaned.Count > 0 ? cleaned : null;
     }
 
     private static bool IsDeleted(XElement section) =>
