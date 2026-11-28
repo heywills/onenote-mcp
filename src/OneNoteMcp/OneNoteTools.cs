@@ -10,7 +10,7 @@ using static OneNoteMcp.Hierarchy;
 namespace OneNoteMcp;
 
 [McpServerToolType]
-public sealed class OneNoteTools(OneNoteClient oneNote)
+public sealed class OneNoteTools(IOneNoteClient oneNote)
 {
     private const int DefaultMaxImageKb = 512;
     private const string OutputPathDescription = "Absolute path of the file to save, such as C:\\work\\page.md. Overwrites it. Required unless inline is true.";
@@ -460,7 +460,8 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         catch
         {
             // Don't leave a blank "Untitled page" behind
-            try { oneNote.DeleteHierarchy(pageId, permanently: true); } catch (McpException) { }
+            // Any cleanup error loses to the real one
+            try { oneNote.DeleteHierarchy(pageId, permanently: true); } catch (Exception) { }
             throw;
         }
 
