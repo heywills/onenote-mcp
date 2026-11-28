@@ -249,7 +249,8 @@ public class LiveTests
                 try { _client.DeleteHierarchy(pageId, permanently: true); } catch (McpException) { }
             }
 
-            _client.DeleteHierarchy(tempSection, permanently: true);
+            // Not hiding a test failure behind a cleanup one
+            try { _client.DeleteHierarchy(tempSection, permanently: true); } catch (McpException) { }
         }
     }
 

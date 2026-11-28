@@ -400,7 +400,10 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
         [Description("The page ID")] string pageId,
         [Description("The target section ID, from onenote_list_sections. The page's own section to reorder it.")] string sectionId,
         [Description("A page in the target section to place it after, as its sibling, after that page's subpages. Empty for the end of the section.")] string afterPageId = "") =>
-        ToJson(new PageMover(oneNote).Move(pageId.Trim(), sectionId.Trim(), afterPageId.Trim()));
+        ToJson(new PageMover(oneNote).Move(Required(pageId, nameof(pageId)), Required(sectionId, nameof(sectionId)), (afterPageId ?? "").Trim()));
+
+    private static string Required(string? value, string name) =>
+        string.IsNullOrWhiteSpace(value) ? throw new McpException($"{name} is empty") : value.Trim();
 
     // Helpers
 

@@ -258,13 +258,13 @@ public sealed class ToolTests : IDisposable
             (A, HierarchyScope.hsSelf) => $"""<one:Page xmlns:one="{FakeOneNote.Ns}" ID="{A}" name="A"/>""",
             (From, HierarchyScope.hsPages) => SectionXml(From, "From", fromPages),
             (To, HierarchyScope.hsSelf) => SectionXml(To, "To", ""),
-            // After the move, a page that sync added comes first, so the new IDs must come from the links
+            // After the move, a page that sync added comes first and has no link yet, so the new IDs must come from the links
             (To, HierarchyScope.hsPages) => SectionXml(To, "To", moved
                 ? $"""<one:Page ID="{X}" name="X"/><one:Page ID="{Synced}" name="Synced"/><one:Page ID="{NewA}" name="A"/><one:Page ID="{NewA1}" name="A1"/>"""
                 : $"""<one:Page ID="{X}" name="X" pageLevel="1"/>"""),
             _ => throw new InvalidOperationException($"Unexpected {id} {scope}"),
         };
-        _oneNote.Hyperlink = LinkOf;
+        _oneNote.Hyperlink = id => id == Synced ? throw new McpException("Not synced yet") : LinkOf(id);
         _oneNote.HierarchyUpdate = _ => moved = true;
 
         var result = JsonDocument.Parse(_tools.MovePage($" {A} ", To)).RootElement;
@@ -298,6 +298,47 @@ public sealed class ToolTests : IDisposable
     }
 
     public enum SectionKind { DeletedSource, DeletedTarget, PageAsTarget }
+
+    [Theory]
+    [InlineData("onenote:x#A&section-id={1}&end", "no unique link page-id")]
+    [InlineData(null, "no unique link page-id")]
+    public void RefusesAMoveItCouldntTrackBeforeMoving(string? link, string error)
+    {
+        _oneNote.Hierarchy = (id, scope) => (id, scope) switch
+        {
+            (A, HierarchyScope.hsSelf) => $"""<one:Page xmlns:one="{FakeOneNote.Ns}" ID="{A}" name="A"/>""",
+            (From, HierarchyScope.hsPages) => SectionXml(From, "From", $"""<one:Page ID="{A}" name="A"/><one:Page ID="{A1}" name="A1" pageLevel="2"/>"""),
+            (To, HierarchyScope.hsSelf) => SectionXml(To, "To", ""),
+            (To, HierarchyScope.hsPages) => SectionXml(To, "To", ""),
+            _ => throw new InvalidOperationException($"Unexpected {id} {scope}"),
+        };
+        // No page-id, or the same one on the page and its subpage
+        _oneNote.Hyperlink = id => link ?? "onenote:x#A&page-id={11111111-1111-1111-1111-111111111111}&end";
+
+        Assert.Contains(error, Assert.Throws<McpException>(() => _tools.MovePage(A, To)).Message);
+        Assert.Empty(_oneNote.HierarchyUpdates);
+    }
+
+    [Fact]
+    public void RefusesALockedSection()
+    {
+        _oneNote.Hierarchy = (id, scope) => (id, scope) switch
+        {
+            (A, HierarchyScope.hsSelf) => $"""<one:Page xmlns:one="{FakeOneNote.Ns}" ID="{A}" name="A"/>""",
+            (From, HierarchyScope.hsPages) => SectionXml(From, "From", $"""<one:Page ID="{A}" name="A"/>"""),
+            (To, HierarchyScope.hsSelf) => SectionXml(To, "To", "", "isLocked=\"true\""),
+            _ => throw new InvalidOperationException($"Unexpected {id} {scope}"),
+        };
+
+        Assert.Contains("locked", Assert.Throws<McpException>(() => _tools.MovePage(A, To)).Message);
+        Assert.Empty(_oneNote.HierarchyUpdates);
+    }
+
+    [Theory]
+    [InlineData(" ", To, "pageId is empty")]
+    [InlineData(A, null, "sectionId is empty")]
+    public void RefusesEmptyIds(string? pageId, string? sectionId, string error) =>
+        Assert.Equal(error, Assert.Throws<McpException>(() => _tools.MovePage(pageId!, sectionId!, null!)).Message);
 
     [Fact]
     public void MovesPagesToDeletedPages()
