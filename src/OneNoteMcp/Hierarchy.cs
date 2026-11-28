@@ -60,10 +60,10 @@ public static partial class Hierarchy
         return [.. titles.Concat(text).DistinctBy(p => p.PageId)];
     }
 
-    /// <summary>The words a title must contain, without quotes, parentheses, a trailing <c>*</c>, <c>AND</c>, or a lone dash. Null when titles aren't searched.</summary>
+    /// <summary>The words a title must contain, without quotes, parentheses, a trailing <c>*</c>, <c>AND</c>, or a lone <c>-</c> or <c>+</c>. Null when titles aren't searched.</summary>
     /// <remarks>
     /// - A query with <c>OR</c>, <c>NOT</c>, a <c>-word</c>, a <c>+word</c>, or a property filter such as <c>title:plan</c> is text search only. Matching those in titles would need a parser for the Windows Search syntax.
-    /// - A lone dash and parentheses are dropped, so a copied title such as "Nick Bushnell - 1:1 (draft)" still matches.
+    /// - A lone <c>-</c> or <c>+</c> and parentheses are dropped, so a copied title such as "Nick Bushnell - 1:1 (draft)" still matches.
     /// </remarks>
     public static IReadOnlyList<string>? TitleWords(string query)
     {
@@ -73,17 +73,17 @@ public static partial class Hierarchy
             return null;
         }
 
-        var cleaned = words.Where(w => w != "AND" && w.Trim('-', '+').Length > 0)
-            .Select(w => w.Trim('"', '(', ')').TrimEnd('*').Trim('"', '(', ')'))
-            .Where(w => w.Length > 0)
+        var cleaned = words.Select(w => w.Trim('"', '(', ')').TrimEnd('*').Trim('"', '(', ')'))
+            .Where(w => w != "AND" && w.Trim('-', '+').Length > 0)
             .ToList();
         // No words left would match every title
         return cleaned.Count > 0 ? cleaned : null;
     }
 
+    /// <summary>Whether a query word is Windows Search syntax that title matching can't follow.</summary>
     /// <remarks>
     /// - Checked inside parentheses and quotes, so <c>(NOT draft)</c> is syntax.
-    /// - A lone <c>-</c> or <c>+</c>, as in a copied "Mike + Nick" title, isn't.
+    /// - A lone <c>-</c> or <c>+</c>, or one before a symbol, as in a copied "Mike + Nick" or "Mike -> Nick" title, isn't.
     /// </remarks>
     private static bool IsSearchSyntax(string word)
     {
@@ -91,7 +91,9 @@ public static partial class Hierarchy
         return w is "OR" or "NOT" || IsPrefixed(w, '+') || IsPrefixed(w, '-') || PropertyFilter().IsMatch(w);
     }
 
-    private static bool IsPrefixed(string word, char prefix) => word.StartsWith(prefix) && word.Trim(prefix).Length > 0;
+    /// <summary>Whether <paramref name="word"/> is <paramref name="prefix"/> before a letter, digit, quote, or parenthesis, as in <c>-draft</c>.</summary>
+    private static bool IsPrefixed(string word, char prefix) =>
+        word.Length > 1 && word[0] == prefix && (char.IsLetterOrDigit(word[1]) || word[1] is '"' or '(');
 
     /// <summary>A Windows Search property filter, such as <c>author:x</c> or <c>System.Title:plan</c>. Not <c>Re:</c> or <c>1:1</c>.</summary>
     [GeneratedRegex(@"^[A-Za-z][A-Za-z.]*:\S")]

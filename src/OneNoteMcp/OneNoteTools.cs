@@ -34,7 +34,7 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     private const string SearchDescription = """
         Matches page titles that contain every query word, then page text through Windows Search, which finds indexed pages only.
         Title matches come first (in_title), then text matches, each newest first. Skips Deleted Pages. total counts all matches.
-        title_search is false for a query with OR, NOT, -word, +word, or a property filter such as author:x, which is text search only, or when OneNote couldn't list the pages.
+        title_search is false for a query with OR, NOT, -word, +word, or a property filter such as author:x, which is text search only, when the query has no words to match, such as *, or when OneNote couldn't list the pages.
         text_search is false when Windows Search failed and only title matches came back.
         """;
 
