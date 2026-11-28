@@ -460,7 +460,8 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
         catch
         {
             // Don't leave a blank "Untitled page" behind
-            try { oneNote.DeleteHierarchy(pageId, permanently: true); } catch (McpException) { }
+            // Any cleanup error loses to the real one
+            try { oneNote.DeleteHierarchy(pageId, permanently: true); } catch (Exception) { }
             throw;
         }
 

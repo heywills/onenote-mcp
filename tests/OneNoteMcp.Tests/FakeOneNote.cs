@@ -7,7 +7,7 @@ namespace OneNoteMcp.Tests;
 /// Stands in for OneNote. Each call runs a handler a test sets.
 /// </summary>
 /// <remarks>
-/// - Reads fail the test until set, with an error the tools don't catch, so a forgotten handler can't pass as a OneNote failure.
+/// - Reads and <c>CreateNewPage</c> fail the test until set, with an error the tools never swallow, so a forgotten handler can't pass as a OneNote failure.
 /// - Updates and deletes succeed by default, and are recorded.
 /// - To simulate a OneNote failure, a handler throws <see cref="McpException"/>.
 /// </remarks>
@@ -31,7 +31,7 @@ internal sealed class FakeOneNote : IOneNoteClient
 
     public Action<string, bool> Delete { get; set; } = (_, _) => { };
 
-    /// <summary>Every UpdatePageContent call's XML, in order</summary>
+    /// <summary>Every UpdatePageContent call's XML, in order, including calls that <see cref="Update"/> fails</summary>
     public List<string> Updated { get; } = [];
 
     /// <summary>Every DeleteHierarchy call, in order</summary>

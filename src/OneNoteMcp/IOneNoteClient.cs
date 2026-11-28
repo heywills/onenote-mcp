@@ -6,7 +6,7 @@ namespace OneNoteMcp;
 /// The OneNote calls the tools make, so tests can stand in for OneNote.
 /// </summary>
 /// <remarks>
-/// - Errors are <see cref="ModelContextProtocol.McpException"/>, with OneNote's error name.
+/// - OneNote failures are <see cref="ModelContextProtocol.McpException"/>.
 /// </remarks>
 public interface IOneNoteClient
 {

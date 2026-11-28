@@ -30,7 +30,7 @@ public sealed class ToolTests : IDisposable
     public void DeletesTheNewPageWhenTheUpdateFails()
     {
         _oneNote.NewPage = _ => "new";
-        _oneNote.PageContent = _ => FakeOneNote.Page();
+        _oneNote.PageContent = Only("new", FakeOneNote.Page());
         _oneNote.Update = _ => throw new McpException("Update failed");
 
         Assert.Equal("Update failed", Assert.Throws<McpException>(() => _tools.CreatePage("section", "T", "<p>x</p>")).Message);
@@ -41,9 +41,9 @@ public sealed class ToolTests : IDisposable
     public void ReportsTheUpdateErrorWhenCleanupAlsoFails()
     {
         _oneNote.NewPage = _ => "new";
-        _oneNote.PageContent = _ => FakeOneNote.Page();
+        _oneNote.PageContent = Only("new", FakeOneNote.Page());
         _oneNote.Update = _ => throw new McpException("Update failed");
-        _oneNote.Delete = (_, _) => throw new McpException("Delete failed");
+        _oneNote.Delete = (_, _) => throw new InvalidOperationException("Delete failed");
 
         Assert.Equal("Update failed", Assert.Throws<McpException>(() => _tools.CreatePage("section", "T", "<p>x</p>")).Message);
         Assert.Equal([("new", true)], _oneNote.Deleted);
@@ -53,7 +53,7 @@ public sealed class ToolTests : IDisposable
     public void CreatesATitleOnlyPage()
     {
         _oneNote.NewPage = _ => "new";
-        _oneNote.PageContent = _ => FakeOneNote.Page();
+        _oneNote.PageContent = Only("new", FakeOneNote.Page());
 
         Assert.Contains("\"page_id\": \"new\"", _tools.CreatePage("section", "Q&A"));
         var page = System.Xml.Linq.XElement.Parse(Assert.Single(_oneNote.Updated));
@@ -64,8 +64,8 @@ public sealed class ToolTests : IDisposable
     [Fact]
     public void SavesPagesWithImagesItCantRead()
     {
-        _oneNote.PageContent = _ => FakeOneNote.Page(Image("cb1") + Image("cb2"));
-        _oneNote.Image = (_, id) => id == "cb1" ? throw new McpException("OneNote returned no image data") : Png;
+        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1") + Image("cb2")));
+        _oneNote.Image = ImagesOf("page", id => id == "cb1" ? throw new McpException("OneNote returned no image data") : Png);
 
         var saved = Save("page.md");
 
@@ -79,8 +79,8 @@ public sealed class ToolTests : IDisposable
     [Fact]
     public void SavesPagesWhenAnImageCantBeWritten()
     {
-        _oneNote.PageContent = _ => FakeOneNote.Page(Image("cb1"));
-        _oneNote.Image = (_, _) => Png;
+        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1")));
+        _oneNote.Image = ImagesOf("page", _ => Png);
         // A file where the image folder goes
         Directory.CreateDirectory(_folder);
         File.WriteAllText(Path.Combine(_folder, "page_images"), "");
@@ -124,7 +124,7 @@ public sealed class ToolTests : IDisposable
         Assert.Equal("Windows Search is off", Assert.Throws<McpException>(() => _tools.Search("project")).Message);
     }
 
-    // Text search only, so there's no page listing and nothing to fall back on
+    /// <summary>Text search only, so there's no page listing and nothing to fall back on.</summary>
     [Fact]
     public void FailsWhenWindowsSearchFailsForAnOperatorQuery()
     {
@@ -136,26 +136,38 @@ public sealed class ToolTests : IDisposable
     [Fact]
     public void FindsALinkedPageInALaterSection()
     {
+        var looked = new List<string>();
         _oneNote.Hierarchy = (id, scope) => scope == HierarchyScope.hsSections ? Sections("s1", "s2") : Pages((id + "-page", "P"));
-        _oneNote.Hyperlink = id => PageLink(id == "s2-page" ? Target : Other);
-        _oneNote.PageContent = _ => FakeOneNote.Page();
+        _oneNote.Hyperlink = id =>
+        {
+            looked.Add(id);
+            return PageLink(id == "s2-page" ? Target : Other);
+        };
+        _oneNote.PageContent = Only("s2-page", FakeOneNote.Page());
 
         Assert.StartsWith("page_id: `s2-page`", _tools.GetPageByLink(Link, inline: true));
+        Assert.Equal(["s1-page", "s2-page"], looked);
     }
 
     [Fact]
     public void ReportsALinkedPageItCantFind()
     {
         _oneNote.Hierarchy = (id, scope) => scope == HierarchyScope.hsSections ? Sections("s1", "s2") : Pages((id + "-page", "P"));
-        _oneNote.Hyperlink = _ => PageLink(Other);
+        var looked = new List<string>();
+        _oneNote.Hyperlink = id =>
+        {
+            looked.Add(id);
+            return PageLink(Other);
+        };
 
         Assert.Contains("Page not found in its section (s1, s2)", Assert.Throws<McpException>(() => _tools.GetPageByLink(Link, inline: true)).Message);
+        Assert.Equal(["s1-page", "s2-page"], looked);
     }
 
     [Fact]
     public void ListsImageCallbackIdsInline()
     {
-        _oneNote.PageContent = _ => FakeOneNote.Page(Image("cb1"));
+        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1")));
 
         Assert.EndsWith("**Image References:**\n- [Image 1]: callback_id=`cb1`\n", _tools.GetPage("page", inline: true));
     }
@@ -163,14 +175,15 @@ public sealed class ToolTests : IDisposable
     [Fact]
     public void ReturnsTheImagesItCanRead()
     {
-        _oneNote.PageContent = _ => FakeOneNote.Page(Image("cb1") + Image("cb2"));
-        _oneNote.Image = (_, id) => id == "cb1" ? throw new McpException("Not downloaded") : PngImage();
+        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1") + Image("cb2")));
+        _oneNote.Image = ImagesOf("page", id => id == "cb1" ? throw new McpException("Not downloaded") : PngImage());
 
         var blocks = _tools.GetPageImages("page").ToList();
 
-        Assert.Equal(["[Image 1] Error: Not downloaded", "[Image 2] (callback_id: cb2)"],
-            blocks.OfType<TextContentBlock>().Select(b => b.Text));
-        Assert.IsType<ImageContentBlock>(blocks[^1]);
+        Assert.Collection(blocks,
+            b => Assert.Equal("[Image 1] Error: Not downloaded", Assert.IsType<TextContentBlock>(b).Text),
+            b => Assert.Equal("[Image 2] (callback_id: cb2)", Assert.IsType<TextContentBlock>(b).Text),
+            b => Assert.IsType<ImageContentBlock>(b));
     }
 
     [Theory]
@@ -215,6 +228,14 @@ public sealed class ToolTests : IDisposable
         bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
         return stream.ToArray();
     }
+
+    /// <summary>Returns <paramref name="xml"/> for <paramref name="pageId"/>, and fails the test for any other page.</summary>
+    private static Func<string, string> Only(string pageId, string xml) =>
+        id => id == pageId ? xml : throw new InvalidOperationException($"Read page {id}, expected {pageId}");
+
+    /// <summary>The images of <paramref name="pageId"/> by callback ID. Fails the test for any other page.</summary>
+    private static Func<string, string, byte[]> ImagesOf(string pageId, Func<string, byte[]> image) =>
+        (id, callbackId) => id == pageId ? image(callbackId) : throw new InvalidOperationException($"Read an image of page {id}, expected {pageId}");
 
     private static string Image(string callbackId) =>
         $"""<one:OE><one:Image><one:CallbackID callbackID="{callbackId}"/></one:Image></one:OE>""";
