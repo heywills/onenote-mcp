@@ -140,7 +140,7 @@ Markdown can't hold everything a OneNote page can:
 - A hard line break splits a paragraph in two, and becomes a space in a list item. OneNote drops line breaks inside a paragraph.
 - Headings, tables, and code inside a quote lose the quote. Nested quotes flatten to one level.
 - Code blocks lose their language, and OneNote stores a tab in code as 8 spaces.
-- Note containers come one after another, so a margin note comes after the main text, not beside it.
+- Note containers come one after another, so a margin note follows the main text.
 - Numbered lists start at 1. Separate lists alternate between `1.` and `1)` in OneNote, so each restarts.
 - Bold covering a whole table header cell is dropped, since the header row is already bold. So is italic covering a whole h4 or h6 heading.
 - Tags in table cells, checkboxes on headings, labels on empty paragraphs, and a To Do's bullet don't survive.

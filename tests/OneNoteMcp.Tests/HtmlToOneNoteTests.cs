@@ -260,19 +260,18 @@ public class HtmlToOneNoteTests
     {
         var page = Convert("""
             <p>Loose</p>
-            <div class="outline" style="position:absolute;left:36pt;top:86.4pt;width:540pt"><p>Main</p></div>
-            <div class="outline" style="position:absolute;left:612pt;top:104.4pt"><p>Note</p></div>
-            <div class="outline"><p>Unplaced</p></div>
+            <div class="outline" style="position:absolute;left:0pt;top:86.4pt;width:540pt;z-index:5"><p>Main</p></div>
+            <div class="outline" style="position:absolute;left:612pt;top:-3pt"><p>Note</p></div>
+            <div class="outline"><p>Unplaced stays in order</p></div>
             """);
 
         var outlines = page.Elements(One + "Outline").ToList();
-        Assert.Equal(["Loose", "Main", "Note", "Unplaced"], outlines.Select(o => string.Concat(Texts(o))));
+        Assert.Equal(["LooseUnplaced stays in order", "Main", "Note"], outlines.Select(o => string.Concat(Texts(o))));
         Assert.Null(outlines[0].Element(One + "Position"));
-        Assert.Equal(("36", "86.4", "1"), Position(outlines[1]));
+        Assert.Equal(("0", "86.4", "5"), Position(outlines[1]));
         Assert.Equal("540", outlines[1].Element(One + "Size")!.Attribute("width")!.Value);
-        Assert.Equal(("612", "104.4", "2"), Position(outlines[2]));
+        Assert.Equal(("612", "-3", "2"), Position(outlines[2]));
         Assert.Null(outlines[2].Element(One + "Size"));
-        Assert.Null(outlines[3].Element(One + "Position"));
     }
 
     private static (string, string, string) Position(XElement outline) =>

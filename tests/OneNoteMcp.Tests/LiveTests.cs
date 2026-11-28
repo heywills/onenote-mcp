@@ -230,8 +230,8 @@ public class LiveTests
         WithCreated(_tools.CreatePage(SectionId(), "Live outline test (deleting now)", html), pageId =>
         {
             var first = _tools.GetPage(pageId, inline: true, format: "html");
-            Assert.Contains("left:36pt;top:86.4pt;width:400pt\">\n<p>Main text</p>", first);
-            Assert.Contains("left:500pt;top:120pt;width:200pt\">\n<p>Margin note</p>", first);
+            Assert.Matches("left:36pt;top:86.4pt;width:400pt;z-index:\\d+\">\n<p>Main text</p>", first);
+            Assert.Matches("left:500pt;top:120pt;width:200pt;z-index:\\d+\">\n<p>Margin note</p>", first);
 
             static string Collapse(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
             WithCreated(_tools.CreatePage(SectionId(), contentHtml: first), copyId =>

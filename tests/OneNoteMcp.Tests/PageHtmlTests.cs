@@ -145,19 +145,24 @@ public class PageHtmlTests
     {
         var html = PageHtml.Convert($"""
             <one:Page xmlns:one="{One}" name="P"><one:Title/>
-              <one:Outline><one:Position x="36.0" y="86.4000015258789" z="0"/><one:Size width="540.0" height="459"/>
+              <one:Outline><one:Position x="36.0" y="86.4000015258789" z="0"/><one:Size width="540.0" height="459" isSetByUser="true"/>
                 <one:OEChildren><one:OE><one:T>Main</one:T></one:OE></one:OEChildren></one:Outline>
               <one:Outline><one:Position x="612.0" y="104.400001525879" z="1"/><one:Size width="342.9000549316406" height="20"/>
                 <one:OEChildren><one:OE><one:T>Note</one:T></one:OE></one:OEChildren></one:Outline>
+              <one:Image><one:Position x="100" y="500" z="2"/><one:Size width="50" height="40"/><one:CallbackID callbackID="cb"/></one:Image>
             </one:Page>
             """).Html;
 
+        // Only a width the user set is fixed. A page-level image keeps its place too.
         Assert.Contains("""
-            <div class="outline" style="position:absolute;left:36pt;top:86.4pt;width:540pt">
+            <div class="outline" style="position:absolute;left:36pt;top:86.4pt;width:540pt;z-index:0">
             <p>Main</p>
             </div>
-            <div class="outline" style="position:absolute;left:612pt;top:104.4pt;width:342.9pt">
+            <div class="outline" style="position:absolute;left:612pt;top:104.4pt;z-index:1">
             <p>Note</p>
+            </div>
+            <div class="outline" style="position:absolute;left:100pt;top:500pt;z-index:2">
+            <p><img data-callback-id="cb" alt="Image 1" style="width:50pt;height:40pt"></p>
             </div>
             """, html);
     }

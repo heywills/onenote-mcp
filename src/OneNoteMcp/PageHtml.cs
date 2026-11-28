@@ -13,7 +13,7 @@ namespace OneNoteMcp;
 /// - OneNote stores text as HTML, so inline formatting passes through as OneNote wrote it.
 /// - Paragraph formatting comes from the OE: its style, alignment, and QuickStyleDef (headings, quote, code).
 /// - onenote_create_page reads this HTML back, taking the title from <c>&lt;title&gt;</c>.
-/// - A page with several outlines, such as margin notes beside the main text, writes each as a <c>div class="outline"</c> at its place on the page.
+/// - A page with several outlines, such as margin notes beside the main text, writes each, and each image placed on the page, as a <c>div class="outline"</c> at its place.
 /// - Ink and paragraph spacing aren't kept.
 /// </remarks>
 public static class PageHtml
@@ -25,29 +25,23 @@ public static class PageHtml
         var (title, styles, repeatedTitle) = PageMarkdown.Parts(root);
         var writer = new Writer(styles, repeatedTitle, imageHtml ?? (img => ImageTag(img, null)), PageTags.Definitions(root));
         var outlines = root.Descendants(One + "Outline").ToList();
+        // A single outline flows as the page. Several keep their places, so a note stays beside its text.
+        var placed = outlines.Count > 1;
         foreach (var outline in outlines)
         {
-            // A single outline flows as the page. Several keep their places, so a note stays beside its text.
-            if (outlines.Count > 1)
+            Place(writer, outline, placed, () =>
             {
-                writer.Raw($"<div class=\"outline\"{OutlineStyle(outline)}>\n");
-            }
-
-            foreach (var children in outline.Elements(One + "OEChildren"))
-            {
-                writer.Blocks(children);
-            }
-
-            if (outlines.Count > 1)
-            {
-                writer.Raw("</div>\n");
-            }
+                foreach (var children in outline.Elements(One + "OEChildren"))
+                {
+                    writer.Blocks(children);
+                }
+            });
         }
 
-        // Images outside outlines
+        // Images outside outlines, at their own places when the outlines have theirs
         foreach (var img in root.Descendants(One + "Image").Where(i => i.Ancestors(One + "Outline").FirstOrDefault() is null))
         {
-            writer.Image(img);
+            Place(writer, img, placed, () => writer.Image(img));
         }
 
         var html = $"""
@@ -65,17 +59,41 @@ public static class PageHtml
         return (html.Replace("\r\n", "\n"), writer.Images);
     }
 
-    /// <summary>An outline's place and width on the page, in points, as a <c>style</c> attribute. Empty when OneNote gave none.</summary>
-    private static string OutlineStyle(XElement outline)
+    /// <summary>Writes an outline or page-level image, in a <c>div class="outline"</c> at its place when <paramref name="placed"/>.</summary>
+    /// <remarks>
+    /// - Something with no place flows with the page, as it reads back into OneNote's default outline.
+    /// </remarks>
+    private static void Place(Writer writer, XElement element, bool placed, Action write)
     {
-        if (outline.Element(One + "Position") is not { } position
-            || ToDouble(position.Attribute("x")) is not { } x || ToDouble(position.Attribute("y")) is not { } y)
+        var style = placed ? PlaceStyle(element) : null;
+        if (style is not null)
         {
-            return "";
+            writer.Raw($"<div class=\"outline\" style=\"{style}\">\n");
         }
 
-        var width = ToDouble(outline.Element(One + "Size")?.Attribute("width")) is { } w ? $";width:{Points(w)}" : "";
-        return $" style=\"position:absolute;left:{Points(x)};top:{Points(y)}{width}\"";
+        write();
+        if (style is not null)
+        {
+            writer.Raw("</div>\n");
+        }
+    }
+
+    /// <summary>An element's place on the page in points, its fixed width, and its stacking order, as CSS. Null when OneNote gave no place.</summary>
+    /// <remarks>
+    /// - The width only when the user set it. Otherwise OneNote grows the outline to fit, and so does the browser.
+    /// </remarks>
+    private static string? PlaceStyle(XElement element)
+    {
+        if (element.Element(One + "Position") is not { } position
+            || ToDouble(position.Attribute("x")) is not { } x || ToDouble(position.Attribute("y")) is not { } y)
+        {
+            return null;
+        }
+
+        var size = element.Element(One + "Size");
+        var width = (string?)size?.Attribute("isSetByUser") == "true" && ToDouble(size?.Attribute("width")) is { } w ? $";width:{Points(w)}" : "";
+        var z = int.TryParse((string?)position.Attribute("z"), out var index) ? $";z-index:{index}" : "";
+        return $"position:absolute;left:{Points(x)};top:{Points(y)}{width}{z}";
     }
 
     private static string Points(double value) => $"{value.ToString("0.##", CultureInfo.InvariantCulture)}pt";
