@@ -99,7 +99,8 @@ public static partial class HtmlToOneNote
         return (builder.Embedded, builder.Linked);
     }
 
-    private static int? ZIndex(string? style) => int.TryParse(Css.Value(style, "z-index"), out var z) && z >= 0 ? z : null;
+    /// <summary>A <c>z-index</c> up to a million, so the ones numbered after it can't overflow.</summary>
+    private static int? ZIndex(string? style) => int.TryParse(Css.Value(style, "z-index"), out var z) && z is >= 0 and <= 1_000_000 ? z : null;
 
     /// <summary>A top-level <c>div class="outline"</c> with a <c>left</c> and <c>top</c> in points. Other divs, even with that class, are ordinary blocks.</summary>
     private static bool IsPlacedOutline(IElement e) =>
@@ -769,7 +770,7 @@ public static partial class HtmlToOneNote
         value is not null && value.EndsWith("pt", StringComparison.OrdinalIgnoreCase)
         && double.TryParse(value[..^2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var points)
         && double.IsFinite(points) && Math.Abs(points) <= 1_000_000
-            ? points
+            ? Math.Round(points, 2) + 0.0 // rounded as written, and -0 made 0
             : null;
 
     private static string Format(double points) => points.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);

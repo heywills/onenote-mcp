@@ -26,7 +26,7 @@ public static class PageHtml
         var writer = new Writer(styles, repeatedTitle, imageHtml ?? (img => ImageTag(img, null)), PageTags.Definitions(root));
         var outlines = root.Descendants(One + "Outline").ToList();
         // A single outline flows as the page. Several with content keep their places, so a note stays beside its text.
-        var placed = outlines.Count(o => o.Descendants(One + "OE").Any()) > 1;
+        var placed = outlines.Count(HasContent) > 1;
         foreach (var outline in outlines)
         {
             Place(writer, outline, placed, () =>
@@ -96,6 +96,11 @@ public static class PageHtml
         var z = int.TryParse((string?)position.Attribute("z"), out var index) ? $";z-index:{index}" : "";
         return $"position:absolute;left:{Points(x)};top:{Points(y)}{width}{z}";
     }
+
+    /// <summary>Whether an outline holds text, an image, a table, or a file. A click on the canvas can leave an empty one behind.</summary>
+    private static bool HasContent(XElement outline) =>
+        outline.Descendants().Any(e => e.Name.LocalName is "Image" or "Table" or "InsertedFile")
+        || outline.Descendants(One + "T").Any(t => !string.IsNullOrWhiteSpace(PageMarkdown.CleanText(t.Value)));
 
     /// <summary>The ID the image tools fetch an image by, or null when OneNote gave none.</summary>
     private static string? CallbackId(XElement img) =>

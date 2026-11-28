@@ -264,10 +264,14 @@ public class HtmlToOneNoteTests
             <div class="outline" style="position:absolute;left:612pt;top:-3pt"><p>Note</p></div>
             <div class="outline"><p>Unplaced stays in order</p></div>
             <div class="outline" style="position:absolute;left:NaNpt;top:1e9pt"><p>Bad place</p></div>
+            <div class="outline" style="position:absolute;left:-0.001pt;top:10pt;width:0.004pt;z-index:2147483647"><p>Edge</p></div>
             """);
 
         var outlines = page.Elements(One + "Outline").ToList();
-        Assert.Equal(["LooseUnplaced stays in orderBad place", "Main", "Note"], outlines.Select(o => string.Concat(Texts(o))));
+        Assert.Equal(["LooseUnplaced stays in orderBad place", "Main", "Note", "Edge"], outlines.Select(o => string.Concat(Texts(o))));
+        // A tiny negative place is 0, a width that rounds to 0 is dropped, and a huge z-index falls back to the order
+        Assert.Equal(("0", "10", "8"), Position(outlines[3]));
+        Assert.Null(outlines[3].Element(One + "Size"));
         Assert.Null(outlines[0].Element(One + "Position"));
         Assert.Equal(("0", "86.4", "5"), Position(outlines[1]));
         Assert.Equal("540", outlines[1].Element(One + "Size")!.Attribute("width")!.Value);

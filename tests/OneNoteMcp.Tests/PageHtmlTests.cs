@@ -170,11 +170,12 @@ public class PageHtmlTests
     [Fact]
     public void FlowsAPageWithOneOutlineOfText()
     {
-        // An empty outline, and a page-level image without an ID, don't make it a placed page
+        // Empty outlines, even with a blank line, and a page-level image without an ID, don't make it a placed page
         var html = PageHtml.Convert($"""
             <one:Page xmlns:one="{One}" name="P"><one:Title/>
               <one:Outline><one:Position x="36" y="86" z="0"/><one:OEChildren><one:OE><one:T>Text</one:T></one:OE></one:OEChildren></one:Outline>
               <one:Outline><one:Position x="400" y="86" z="1"/></one:Outline>
+              <one:Outline><one:Position x="400" y="300" z="3"/><one:OEChildren><one:OE><one:T><![CDATA[ ]]></one:T></one:OE></one:OEChildren></one:Outline>
               <one:Image><one:Position x="100" y="500" z="2"/></one:Image>
             </one:Page>
             """).Html;
