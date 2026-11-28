@@ -60,6 +60,10 @@ public sealed class OneNoteClient : IOneNoteClient
         Call(app => { app.UpdatePageContent(xml, DateTime.MinValue, XMLSchema.xs2013, false); return 0; });
 
     /// <inheritdoc/>
+    public void UpdateHierarchy(string xml) =>
+        Call(app => { app.UpdateHierarchy(xml, XMLSchema.xs2013); return 0; });
+
+    /// <inheritdoc/>
     public void DeleteHierarchy(string objectId, bool permanently = false) =>
         Call(app => { app.DeleteHierarchy(objectId, DateTime.MinValue, permanently); return 0; });
 

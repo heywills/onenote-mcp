@@ -34,6 +34,11 @@ internal sealed class FakeOneNote : IOneNoteClient
     /// <summary>Every UpdatePageContent call's XML, in order, including calls that <see cref="Update"/> fails</summary>
     public List<string> Updated { get; } = [];
 
+    public Action<string> HierarchyUpdate { get; set; } = _ => { };
+
+    /// <summary>Every UpdateHierarchy call's XML, in order</summary>
+    public List<string> HierarchyUpdates { get; } = [];
+
     /// <summary>Every DeleteHierarchy call, in order</summary>
     public List<(string Id, bool Permanently)> Deleted { get; } = [];
 
@@ -53,6 +58,12 @@ internal sealed class FakeOneNote : IOneNoteClient
     {
         Updated.Add(xml);
         Update(xml);
+    }
+
+    public void UpdateHierarchy(string xml)
+    {
+        HierarchyUpdates.Add(xml);
+        HierarchyUpdate(xml);
     }
 
     public void DeleteHierarchy(string objectId, bool permanently = false)

@@ -31,6 +31,9 @@ public interface IOneNoteClient
     /// <summary>Replaces a page's content with this page XML.</summary>
     void UpdatePageContent(string xml);
 
+    /// <summary>Applies hierarchy XML, such as a section's page list with pages added or reordered. A page added from another section moves.</summary>
+    void UpdateHierarchy(string xml);
+
     /// <summary>Deletes a page, section, or notebook.</summary>
     /// <param name="permanently">Skip the notebook's recycle bin</param>
     void DeleteHierarchy(string objectId, bool permanently = false);

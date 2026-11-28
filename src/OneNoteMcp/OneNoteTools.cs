@@ -391,6 +391,20 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
         return ToJson(new { Status = "moved to Deleted Pages", Title = (string?)page.Attribute("name") });
     }
 
+    [McpServerTool(Name = "onenote_move_page", Destructive = true, Idempotent = false)]
+    [Description("""
+        Move a page and its subpages to a section in any notebook, or to another place in its own section.
+        Pages that change section get new IDs: use the page_id and moved list in the result. Their "Copy link to page" page-id stays the same.
+        """)]
+    public string MovePage(
+        [Description("The page ID")] string pageId,
+        [Description("The target section ID, from onenote_list_sections. The page's own section to reorder it.")] string sectionId,
+        [Description("A page in the target section to place it after, as its sibling, after that page's subpages. Empty for the end of the section.")] string afterPageId = "") =>
+        ToJson(new PageMover(oneNote).Move(Required(pageId, nameof(pageId)), Required(sectionId, nameof(sectionId)), (afterPageId ?? "").Trim()));
+
+    private static string Required(string? value, string name) =>
+        string.IsNullOrWhiteSpace(value) ? throw new McpException($"{name} is empty") : value.Trim();
+
     // Helpers
 
     /// <summary>Checks the output options before any OneNote call.</summary>

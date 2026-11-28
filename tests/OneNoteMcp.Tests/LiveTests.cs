@@ -219,6 +219,41 @@ public class LiveTests
         WithCreated(_tools.CreatePageFromMarkdown(SectionId(), title: "Live title-only test (deleting now)"), pageId =>
             Assert.Equal("# Live title-only test (deleting now)", _tools.GetPage(pageId, inline: true)));
 
+    /// <summary>A page moves to another section and back, with a new ID in each, and keeps its content.</summary>
+    [LiveFact]
+    public void MovesPagesBetweenSections()
+    {
+        var (notebookId, sectionId) = TestIds();
+        new Microsoft.Office.Interop.OneNote.Application2Class().OpenHierarchy(
+            $"Live move test {Guid.NewGuid():N}.one", notebookId, out var tempSection, Microsoft.Office.Interop.OneNote.CreateFileType.cftSection);
+        string? pageId = null;
+        try
+        {
+            const string markdown = "# Live move test (deleting now)\n\nBody";
+            pageId = JsonDocument.Parse(_tools.CreatePageFromMarkdown(sectionId, markdown)).RootElement.GetProperty("page_id").GetString()!;
+            var first = pageId;
+
+            pageId = JsonDocument.Parse(_tools.MovePage(pageId, tempSection)).RootElement.GetProperty("page_id").GetString()!;
+            Assert.NotEqual(first, pageId);
+            Assert.Contains(pageId, _tools.ListPages(tempSection));
+            Assert.DoesNotContain(first, _tools.ListPages(sectionId));
+            Assert.Equal(markdown, _tools.GetPage(pageId, inline: true));
+
+            pageId = JsonDocument.Parse(_tools.MovePage(pageId, sectionId)).RootElement.GetProperty("page_id").GetString()!;
+            Assert.Contains(pageId, _tools.ListPages(sectionId));
+        }
+        finally
+        {
+            if (pageId is not null)
+            {
+                try { _client.DeleteHierarchy(pageId, permanently: true); } catch (McpException) { }
+            }
+
+            // Not hiding a test failure behind a cleanup one
+            try { _client.DeleteHierarchy(tempSection, permanently: true); } catch (McpException) { }
+        }
+    }
+
     /// <summary>A margin note beside the main text keeps its place through HTML.</summary>
     [LiveFact]
     public void RoundTripsPositionedOutlines()

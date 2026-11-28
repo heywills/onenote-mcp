@@ -83,6 +83,7 @@ Ask in plain language. For example:
 | `onenote_get_image` | One image, by callback ID |
 | `onenote_create_page` | New page from HTML |
 | `onenote_create_page_from_markdown` | New page from Markdown |
+| `onenote_move_page` | Move a page and its subpages to another section or notebook, or to another place in its section |
 | `onenote_delete_page` | Move a page to Deleted Pages |
 
 ### Reading pages
@@ -127,6 +128,10 @@ Search matches page titles that contain every query word, then page text through
 - Title search finds new pages that Windows Search hasn't indexed yet.
 - A query with `OR`, `NOT`, `-word`, `+word`, or a property filter such as `author:x` searches text only.
 - Deleted pages are skipped.
+
+### Moving pages
+
+`onenote_move_page` moves a page and its subpages to a section in any notebook, at the end or after `afterPageId` as that page's sibling. Pass the page's own section to reorder it. Pages that change section get new IDs, and the result lists each old and new ID. Their "Copy link to page" page-id stays the same.
 
 ### Deleting pages
 
