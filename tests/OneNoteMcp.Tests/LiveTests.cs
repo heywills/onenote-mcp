@@ -219,6 +219,22 @@ public class LiveTests
         WithCreated(_tools.CreatePageFromMarkdown(SectionId(), title: "Live title-only test (deleting now)"), pageId =>
             Assert.Equal("# Live title-only test (deleting now)", _tools.GetPage(pageId, inline: true)));
 
+    // Windows Search hasn't indexed a new page, so only title search finds it
+    [LiveFact]
+    public void FindsNewPagesByTitleAndSkipsDeletedPages()
+    {
+        var token = $"zq{Guid.NewGuid():N}"[..12];
+        WithCreated(_tools.CreatePageFromMarkdown(SectionId(), title: $"Live search {token} (deleting now)"), pageId =>
+        {
+            var found = JsonDocument.Parse(_tools.Search(token.ToUpperInvariant())).RootElement;
+            var result = Assert.Single(found.GetProperty("results").EnumerateArray());
+            Assert.Equal((pageId, true), (result.GetProperty("page_id").GetString(), result.GetProperty("in_title").GetBoolean()));
+        });
+
+        var deleting = JsonDocument.Parse(_tools.Search("deleting now", maxResults: 1000)).RootElement;
+        Assert.DoesNotContain(deleting.GetProperty("results").EnumerateArray(), r => r.GetProperty("section").GetString() == "Deleted Pages");
+    }
+
     // A page saved to a file comes back as the same Markdown when created from that file
     [LiveFact]
     public void CreatesPagesFromFiles() =>

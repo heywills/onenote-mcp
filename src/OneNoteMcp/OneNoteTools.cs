@@ -30,7 +30,15 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         onenote_create_page reads it back, with the title from <title>.
         """;
 
-    private const string InlineDescription = "Return the content in the response instead of saving a file. Don't pass outputPath with it.";
+    private const int DefaultMaxResults = 20;
+    private const string SearchDescription = """
+        Matches page titles that hold every query word, then page text through Windows Search, which finds indexed pages only.
+        Title matches come first (in_title), then text matches, each newest first. Skips Deleted Pages. total counts all matches.
+        """;
+
+    private const string MaxResultsDescription = "Most results to return";
+
+    private const string InlineDescription ="Return the content in the response instead of saving a file. Don't pass outputPath with it.";
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -288,13 +296,17 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     // Search
 
     [McpServerTool(Name = "onenote_search", ReadOnly = true)]
-    [Description("Full-text search across all open notebooks. Uses Windows Search, so it finds indexed pages only.")]
-    public string Search([Description("Search query")] string query) => SearchIn(query, "");
+    [Description("Search all open notebooks. " + SearchDescription)]
+    public string Search(
+        [Description("Search query")] string query,
+        [Description(MaxResultsDescription)] int maxResults = DefaultMaxResults) => SearchIn(query, "", maxResults);
 
     [McpServerTool(Name = "onenote_search_in_notebook", ReadOnly = true)]
-    [Description("Full-text search within one notebook. Uses Windows Search, so it finds indexed pages only.")]
-    public string SearchInNotebook([Description("The notebook ID")] string notebookId, [Description("Search query")] string query) =>
-        SearchIn(query, notebookId);
+    [Description("Search one notebook. " + SearchDescription)]
+    public string SearchInNotebook(
+        [Description("The notebook ID")] string notebookId,
+        [Description("Search query")] string query,
+        [Description(MaxResultsDescription)] int maxResults = DefaultMaxResults) => SearchIn(query, notebookId, maxResults);
 
     // Write
 
@@ -453,10 +465,22 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         return ToJson(new { Status = "created", PageId = pageId, Title = title, Images = images.Embedded, LinkedImages = images.Linked });
     }
 
-    private string SearchIn(string query, string notebookId)
+    private string SearchIn(string query, string notebookId, int maxResults)
     {
-        var results = ParseSearchResults(oneNote.FindPages(query, notebookId));
-        return results.Count > 0 ? ToJson(results) : ToJson(new { Message = "No results found", Query = query });
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            throw new McpException("query is empty");
+        }
+
+        if (maxResults < 1)
+        {
+            throw new McpException("maxResults must be at least 1");
+        }
+
+        var results = RankSearchResults(query,
+            ParseSearchResults(oneNote.GetHierarchy(notebookId, HierarchyScope.hsPages)),
+            ParseSearchResults(oneNote.FindPages(query, notebookId)));
+        return ToJson(new { Query = query, Total = results.Count, Results = results.Take(maxResults) });
     }
 
     private ImageContentBlock Image(string pageId, string callbackId, int maxSizeKb)

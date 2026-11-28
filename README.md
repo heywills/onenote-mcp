@@ -17,8 +17,8 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 | `onenote_get_page_raw` | Page as OneNote XML |
 | `onenote_get_page_images` | Images on a page |
 | `onenote_get_image` | One image by callback ID |
-| `onenote_search` | Search all notebooks |
-| `onenote_search_in_notebook` | Search one notebook |
+| `onenote_search` | Search all notebooks: title matches first, then text matches, newest first, up to `maxResults` (20) |
+| `onenote_search_in_notebook` | Search one notebook, the same way |
 | `onenote_create_page` | New page from HTML: headings, nested lists, tables, code, images. Reads back the HTML `onenote_get_page` saves. |
 | `onenote_create_page_from_markdown` | New page from Markdown. Reads back as the same Markdown, images included. |
 | `onenote_delete_page` | Moves a page to Deleted Pages. Subpages stay. |
@@ -59,7 +59,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 
 ## Notes
 
-- Search uses Windows Search, so it finds indexed pages only.
+- Search matches titles that hold every query word, so it finds new pages too. Text search uses Windows Search, which finds indexed pages only. Deleted pages are skipped.
 - Images OneNote hasn't downloaded yet return an error from the image tools, and show as `[Image N: reason]` in saved pages. Open the page in OneNote desktop, then retry.
 - Markdown that OneNote can't hold:
   - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.

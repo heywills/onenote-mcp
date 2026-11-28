@@ -357,6 +357,12 @@ public class OutputTests
     public void RejectsAnUnknownFormat() =>
         Assert.Contains("format must be markdown or html", Assert.Throws<McpException>(() => _tools.GetPage("{page}", @"C:\work\page.pdf", format: "pdf")).Message);
 
+    [Theory]
+    [InlineData(" ", 20, "query is empty")]
+    [InlineData("x", 0, "maxResults must be at least 1")]
+    public void RejectsBadSearches(string query, int maxResults, string error) =>
+        Assert.Contains(error, Assert.Throws<McpException>(() => _tools.Search(query, maxResults)).Message);
+
     [Fact]
     public void ReadsNoFormatAsMarkdown() =>
         Assert.Contains("Pass outputPath", Assert.Throws<McpException>(() => _tools.GetPage("{page}", format: null!)).Message);

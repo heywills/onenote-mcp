@@ -13,7 +13,8 @@ public sealed record NotebookInfo(
     string Id, string Name, string? Path, string? LastModified,
     IReadOnlyList<SectionInfo> Sections, IReadOnlyList<SectionGroupInfo> SectionGroups);
 
-public sealed record SearchResult(string PageId, string PageName, string Notebook, string Section, string LastModified);
+/// <param name="InTitle">Every query word is in the page title</param>
+public sealed record SearchResult(string PageId, string PageName, string Notebook, string Section, string LastModified, bool InTitle = false);
 
 /// <summary>
 /// Parses OneNote hierarchy XML (from <c>GetHierarchy</c> and <c>FindPages</c>).
@@ -27,11 +28,39 @@ public static class Hierarchy
             Attr(nb, "ID"), Attr(nb, "name"), (string?)nb.Attribute("path"), (string?)nb.Attribute("lastModifiedTime"),
             ParseSections(nb), ParseSectionGroups(nb))).ToList();
 
+    /// <summary>The pages in hierarchy or <c>FindPages</c> XML, without those in Deleted Pages or the recycle bin.</summary>
     public static IReadOnlyList<SearchResult> ParseSearchResults(string xml) =>
         AsNotebooks(XElement.Parse(xml)).Elements(One + "Notebook")
-            .SelectMany(nb => nb.Descendants(One + "Section").SelectMany(sec => sec.Elements(One + "Page").Select(p =>
-                new SearchResult(Attr(p, "ID"), Attr(p, "name"), Attr(nb, "name"), Attr(sec, "name"), Attr(p, "lastModifiedTime")))))
+            .SelectMany(nb => nb.Descendants(One + "Section").Where(sec => !IsDeleted(sec)).SelectMany(sec => sec.Elements(One + "Page")
+                .Where(p => !IsTrue(p, "isInRecycleBin"))
+                .Select(p => new SearchResult(Attr(p, "ID"), Attr(p, "name"), Attr(nb, "name"), Attr(sec, "name"), Attr(p, "lastModifiedTime")))))
             .ToList();
+
+    /// <summary>
+    /// Title matches first, then text matches from Windows Search, each newest first.
+    /// </summary>
+    /// <param name="pages">Every page in the search scope, from the hierarchy</param>
+    /// <param name="found">Windows Search's results</param>
+    /// <remarks>
+    /// - Title search finds pages the index misses, such as new pages.
+    /// - A title matches when it holds every query word, ignoring case.
+    /// </remarks>
+    public static IReadOnlyList<SearchResult> RankSearchResults(string query, IEnumerable<SearchResult> pages, IEnumerable<SearchResult> found)
+    {
+        var words = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var titles = pages.Where(p => words.All(w => p.PageName.Contains(w, StringComparison.OrdinalIgnoreCase)))
+            .Select(p => p with { InTitle = true })
+            .OrderByDescending(p => p.LastModified, StringComparer.Ordinal)
+            .ToList();
+        var text = found.OrderByDescending(p => p.LastModified, StringComparer.Ordinal);
+        return [.. titles.Concat(text).DistinctBy(p => p.PageId)];
+    }
+
+    private static bool IsDeleted(XElement section) =>
+        IsTrue(section, "isInRecycleBin") || IsTrue(section, "isDeletedPages")
+        || section.Ancestors(One + "SectionGroup").Any(g => IsTrue(g, "isRecycleBin"));
+
+    private static bool IsTrue(XElement e, string name) => (string?)e.Attribute(name) == "true";
 
     /// <summary>
     /// Wraps a scoped result in Notebooks &gt; Notebook.
