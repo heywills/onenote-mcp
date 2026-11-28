@@ -94,6 +94,7 @@ Markdown keeps headings, nested lists, tables, code, inline formatting, links, a
 - Alignment and indented paragraphs
 - Table header rows and cell shading
 - Image sizes
+- Where each note container sits on the page, so a margin note stays beside its text
 
 An image OneNote hasn't downloaded yet shows as `[Image N: reason]`, with any text OneNote recognized in it. Open the page in OneNote desktop, then save it again.
 
@@ -139,6 +140,7 @@ Markdown can't hold everything a OneNote page can:
 - A hard line break splits a paragraph in two, and becomes a space in a list item. OneNote drops line breaks inside a paragraph.
 - Headings, tables, and code inside a quote lose the quote. Nested quotes flatten to one level.
 - Code blocks lose their language, and OneNote stores a tab in code as 8 spaces.
+- Note containers come one after another, so a margin note comes after the main text, not beside it.
 - Numbered lists start at 1. Separate lists alternate between `1.` and `1)` in OneNote, so each restarts.
 - Bold covering a whole table header cell is dropped, since the header row is already bold. So is italic covering a whole h4 or h6 heading.
 - Tags in table cells, checkboxes on headings, labels on empty paragraphs, and a To Do's bullet don't survive.

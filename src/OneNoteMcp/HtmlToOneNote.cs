@@ -13,8 +13,9 @@ namespace OneNoteMcp;
 /// </summary>
 /// <remarks>
 /// OneNote's <c>one:T</c> holds inline HTML only. Block elements become OneNote structure:
-/// - <c>p</c>, <c>div</c>, <c>br</c>: one OE per paragraph or line
-/// - <c>h1</c>-<c>h6</c>: OE with a heading QuickStyleDef, and a blank OE before it
+/// - <c>p</c>, <c>div</c>: one OE per paragraph. From Markdown, a <c>br</c> starts a new one.
+/// - <c>h1</c>-<c>h6</c>: OE with a heading QuickStyleDef. From Markdown, a blank OE before it.
+/// - <c>div class="outline"</c> with a position: an Outline of its own at that place, such as a margin note
 /// - <c>ul</c>, <c>ol</c>, <c>li</c>: OE with <c>one:List</c>, nested lists in OEChildren
 /// - <c>table</c>: <c>one:Table</c>
 /// - <c>pre</c>: one OE per line, in OneNote's Code style
@@ -66,10 +67,11 @@ public static partial class HtmlToOneNote
         var tagDefs = page.Elements(One + "TagDef").ToList();
         builder.UseTags(PageTags.Definitions(page));
 
-        var outline = new XElement(One + "Outline");
-        var children = new XElement(One + "OEChildren");
-        outline.Add(children);
-        builder.Blocks(body.ChildNodes, children);
+        // Positioned outlines, as onenote_get_page's HTML writes margin notes, become outlines of their own
+        var placed = body.Children.Where(e => e.LocalName == "div" && e.ClassList.Contains("outline")).ToList();
+        placed.ForEach(e => e.Remove());
+        var outlines = new List<XElement> { NewOutline(builder, body.ChildNodes, null, 0) };
+        outlines.AddRange(placed.Select((div, i) => NewOutline(builder, div.ChildNodes, div.GetAttribute("style"), i + 1)));
 
         // QuickStyleDefs must sit together, before the content.
         var newDefs = builder.NewStyles.Select(style =>
@@ -91,12 +93,31 @@ public static partial class HtmlToOneNote
         AddDefinitions(page, tagDefs.LastOrDefault(), builder.NewTags, defs.LastOrDefault(), newDefs);
 
         // OneNote rejects an Outline with nothing in it
-        if (children.HasElements)
+        page.Add(outlines.Where(o => o.Element(One + "OEChildren")!.HasElements));
+        return (builder.Embedded, builder.Linked);
+    }
+
+    /// <summary>An Outline holding <paramref name="nodes"/>, at the place <paramref name="style"/> gives, if any.</summary>
+    /// <param name="z">The outline's stacking order</param>
+    /// <remarks>
+    /// - OneNote needs a Size with a height, and a Position with z. It sizes the height to the content itself.
+    /// </remarks>
+    private static XElement NewOutline(Builder builder, IEnumerable<INode> nodes, string? style, int z)
+    {
+        var children = new XElement(One + "OEChildren");
+        builder.Blocks(nodes, children);
+        var outline = new XElement(One + "Outline");
+        if (Points(Css.Value(style, "left")) is { } x && Points(Css.Value(style, "top")) is { } y)
         {
-            page.Add(outline);
+            outline.Add(new XElement(One + "Position", new XAttribute("x", x), new XAttribute("y", y), new XAttribute("z", z)));
+            if (Points(Css.Value(style, "width")) is { } width)
+            {
+                outline.Add(new XElement(One + "Size", new XAttribute("width", width), new XAttribute("height", "20"), new XAttribute("isSetByUser", "true")));
+            }
         }
 
-        return (builder.Embedded, builder.Linked);
+        outline.Add(children);
+        return outline;
     }
 
     /// <summary>Adds new TagDefs and QuickStyleDefs in schema order: TagDefs, then QuickStyleDefs, then the rest.</summary>

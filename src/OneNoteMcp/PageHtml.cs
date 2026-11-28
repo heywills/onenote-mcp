@@ -13,7 +13,8 @@ namespace OneNoteMcp;
 /// - OneNote stores text as HTML, so inline formatting passes through as OneNote wrote it.
 /// - Paragraph formatting comes from the OE: its style, alignment, and QuickStyleDef (headings, quote, code).
 /// - onenote_create_page reads this HTML back, taking the title from <c>&lt;title&gt;</c>.
-/// - Tags, ink, and paragraph spacing aren't kept.
+/// - A page with several outlines, such as margin notes beside the main text, writes each as a <c>div class="outline"</c> at its place on the page.
+/// - Ink and paragraph spacing aren't kept.
 /// </remarks>
 public static class PageHtml
 {
@@ -23,11 +24,23 @@ public static class PageHtml
         var root = XElement.Parse(xml);
         var (title, styles, repeatedTitle) = PageMarkdown.Parts(root);
         var writer = new Writer(styles, repeatedTitle, imageHtml ?? (img => ImageTag(img, null)), PageTags.Definitions(root));
-        foreach (var outline in root.Descendants(One + "Outline"))
+        var outlines = root.Descendants(One + "Outline").ToList();
+        foreach (var outline in outlines)
         {
+            // A single outline flows as the page. Several keep their places, so a note stays beside its text.
+            if (outlines.Count > 1)
+            {
+                writer.Raw($"<div class=\"outline\"{OutlineStyle(outline)}>\n");
+            }
+
             foreach (var children in outline.Elements(One + "OEChildren"))
             {
                 writer.Blocks(children);
+            }
+
+            if (outlines.Count > 1)
+            {
+                writer.Raw("</div>\n");
             }
         }
 
@@ -51,6 +64,24 @@ public static class PageHtml
             """;
         return (html.Replace("\r\n", "\n"), writer.Images);
     }
+
+    /// <summary>An outline's place and width on the page, in points, as a <c>style</c> attribute. Empty when OneNote gave none.</summary>
+    private static string OutlineStyle(XElement outline)
+    {
+        if (outline.Element(One + "Position") is not { } position
+            || ToDouble(position.Attribute("x")) is not { } x || ToDouble(position.Attribute("y")) is not { } y)
+        {
+            return "";
+        }
+
+        var width = ToDouble(outline.Element(One + "Size")?.Attribute("width")) is { } w ? $";width:{Points(w)}" : "";
+        return $" style=\"position:absolute;left:{Points(x)};top:{Points(y)}{width}\"";
+    }
+
+    private static string Points(double value) => $"{value.ToString("0.##", CultureInfo.InvariantCulture)}pt";
+
+    private static double? ToDouble(XAttribute? a) =>
+        double.TryParse((string?)a, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : null;
 
     /// <summary>An <c>img</c> for a saved image, or with its callback ID when <paramref name="src"/> is null.</summary>
     /// <remarks>
@@ -248,9 +279,6 @@ public static class PageHtml
             _html.Append($"<p>{imageHtml(reference)}</p>\n");
         }
 
-        private static double? ToDouble(XAttribute? a) =>
-            double.TryParse((string?)a, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : null;
-
         /// <remarks>
         /// - The header row is <c>th</c> only when OneNote marks it as one.
         /// - Cell shading becomes the cell's background color.
@@ -280,6 +308,9 @@ public static class PageHtml
 
             _html.Append("</table>\n");
         }
+
+        /// <summary>Writes markup as is, such as an outline's <c>div</c>.</summary>
+        public void Raw(string html) => _html.Append(html);
 
         public override string ToString() => _html.ToString();
     }
