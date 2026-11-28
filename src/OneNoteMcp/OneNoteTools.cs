@@ -30,6 +30,16 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         onenote_create_page reads it back, with the title from <title>.
         """;
 
+    private const int DefaultMaxResults = 20;
+    private const string SearchDescription = """
+        Matches page titles that contain every query word, then page text through Windows Search, which finds indexed pages only.
+        Title matches come first (in_title), then text matches, each newest first. Skips Deleted Pages. total counts all matches.
+        title_search is false for a query with OR, NOT, -word, +word, or a property filter such as author:x, which is text search only, when the query has no words to match, such as *, or when OneNote couldn't list the pages.
+        text_search is false when Windows Search failed and only title matches came back.
+        """;
+
+    private const string MaxResultsDescription = "Most results to return";
+
     private const string InlineDescription = "Return the content in the response instead of saving a file. Don't pass outputPath with it.";
 
     private static readonly JsonSerializerOptions Json = new()
@@ -288,13 +298,17 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
     // Search
 
     [McpServerTool(Name = "onenote_search", ReadOnly = true)]
-    [Description("Full-text search across all open notebooks. Uses Windows Search, so it finds indexed pages only.")]
-    public string Search([Description("Search query")] string query) => SearchIn(query, "");
+    [Description("Search all open notebooks. " + SearchDescription)]
+    public string Search(
+        [Description("Search query")] string query,
+        [Description(MaxResultsDescription)] int maxResults = DefaultMaxResults) => SearchIn(query, "", maxResults);
 
     [McpServerTool(Name = "onenote_search_in_notebook", ReadOnly = true)]
-    [Description("Full-text search within one notebook. Uses Windows Search, so it finds indexed pages only.")]
-    public string SearchInNotebook([Description("The notebook ID")] string notebookId, [Description("Search query")] string query) =>
-        SearchIn(query, notebookId);
+    [Description("Search one notebook. " + SearchDescription)]
+    public string SearchInNotebook(
+        [Description("The notebook ID")] string notebookId,
+        [Description("Search query")] string query,
+        [Description(MaxResultsDescription)] int maxResults = DefaultMaxResults) => SearchIn(query, notebookId, maxResults);
 
     // Write
 
@@ -453,10 +467,54 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         return ToJson(new { Status = "created", PageId = pageId, Title = title, Images = images.Embedded, LinkedImages = images.Linked });
     }
 
-    private string SearchIn(string query, string notebookId)
+    private string SearchIn(string query, string notebookId, int maxResults)
     {
-        var results = ParseSearchResults(oneNote.FindPages(query, notebookId));
-        return results.Count > 0 ? ToJson(results) : ToJson(new { Message = "No results found", Query = query });
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            throw new McpException("query is empty");
+        }
+
+        if (maxResults < 1)
+        {
+            throw new McpException("maxResults must be at least 1");
+        }
+
+        var pages = TitleWords(query) is null ? null : AllPages(notebookId);
+        var found = TextMatches(query, notebookId, canFail: pages is not null);
+        var results = RankSearchResults(query, pages, found ?? []);
+        return ToJson(new
+        {
+            Query = query, TitleSearch = pages is not null, TextSearch = found is not null, Total = results.Count, Results = results.Take(maxResults),
+        });
+    }
+
+    /// <summary>Windows Search's matches. Null when it fails and <paramref name="canFail"/>, so title matches still come back.</summary>
+    private IReadOnlyList<SearchResult>? TextMatches(string query, string notebookId, bool canFail)
+    {
+        try
+        {
+            return ParseSearchResults(oneNote.FindPages(query, notebookId));
+        }
+        catch (McpException) when (canFail)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Every page in the scope, for title search. Null when OneNote can't list them.</summary>
+    /// <remarks>
+    /// - A notebook that isn't downloaded or is offline can fail the listing, but text search may still work.
+    /// </remarks>
+    private IReadOnlyList<SearchResult>? AllPages(string notebookId)
+    {
+        try
+        {
+            return ParseSearchResults(oneNote.GetHierarchy(notebookId, HierarchyScope.hsPages));
+        }
+        catch (McpException)
+        {
+            return null;
+        }
     }
 
     private ImageContentBlock Image(string pageId, string callbackId, int maxSizeKb)

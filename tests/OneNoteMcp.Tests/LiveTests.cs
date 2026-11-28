@@ -219,6 +219,19 @@ public class LiveTests
         WithCreated(_tools.CreatePageFromMarkdown(SectionId(), title: "Live title-only test (deleting now)"), pageId =>
             Assert.Equal("# Live title-only test (deleting now)", _tools.GetPage(pageId, inline: true)));
 
+    // Windows Search hasn't indexed a new page, so only title search finds it
+    [LiveFact]
+    public void FindsNewPagesByTitle()
+    {
+        var token = $"zq{Guid.NewGuid():N}"[..12];
+        WithCreated(_tools.CreatePageFromMarkdown(SectionId(), title: $"Live search {token} (deleting now)"), pageId =>
+        {
+            var found = JsonDocument.Parse(_tools.Search(token.ToUpperInvariant())).RootElement;
+            var result = Assert.Single(found.GetProperty("results").EnumerateArray());
+            Assert.Equal((pageId, true), (result.GetProperty("page_id").GetString(), result.GetProperty("in_title").GetBoolean()));
+        });
+    }
+
     // A page saved to a file comes back as the same Markdown when created from that file
     [LiveFact]
     public void CreatesPagesFromFiles() =>
@@ -267,7 +280,8 @@ public class LiveTests
         var (notebookId, sectionId) = TestIds();
         Assert.Contains("Not a page: Section", Assert.Throws<McpException>(() => _tools.DeletePage(sectionId)).Message);
 
-        var title = $"Live delete test {Guid.NewGuid():N} (in Deleted Pages)";
+        var token = Guid.NewGuid().ToString("N");
+        var title = $"Live delete test {token} (in Deleted Pages)";
         var pageId = JsonDocument.Parse(_tools.CreatePageFromMarkdown(sectionId, $"# {title}\n\nx"))
             .RootElement.GetProperty("page_id").GetString()!;
         try
@@ -286,6 +300,9 @@ public class LiveTests
             .Descendants(Hierarchy.One + "Page")
             .Single(p => (bool?)p.Attribute("isInRecycleBin") == true && (string?)p.Attribute("name") == title);
         Assert.Contains("already in Deleted Pages", Assert.Throws<McpException>(() => _tools.DeletePage((string)deleted.Attribute("ID")!)).Message);
+
+        // Title search would find it, but search skips Deleted Pages
+        Assert.Equal(0, JsonDocument.Parse(_tools.Search(token)).RootElement.GetProperty("total").GetInt32());
     }
 
     [LiveFact]

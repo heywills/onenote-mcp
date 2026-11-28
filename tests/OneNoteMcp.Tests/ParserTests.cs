@@ -153,4 +153,58 @@ public class ParserTests
         Assert.Equal(("Monday Standup", "Work Notes", "Meeting Notes"), (result.PageName, result.Notebook, result.Section));
         Assert.Empty(Hierarchy.ParseSearchResults($"""<one:Notebooks xmlns:one="{Ns}"/>"""));
     }
+
+    [Fact]
+    public void SkipsDeletedPagesInSearchResults() =>
+        Assert.Equal(["kept"], Hierarchy.ParseSearchResults($"""
+            <one:Notebook xmlns:one="{Ns}" name="N" ID="nb">
+              <one:Section name="S" ID="s"><one:Page ID="kept" name="Kept"/><one:Page ID="p1" name="Deleted" isInRecycleBin="true"/></one:Section>
+              <one:SectionGroup name="Recycle Bin" ID="bin" isRecycleBin="true">
+                <one:Section name="Deleted Pages" ID="dp" isDeletedPages="true"><one:Page ID="p2" name="Deleted"/></one:Section>
+                <one:Section name="Old" ID="old"><one:Page ID="p3" name="Deleted"/></one:Section>
+              </one:SectionGroup>
+              <one:Section name="Gone" ID="gone" isInRecycleBin="true"><one:Page ID="p4" name="Deleted"/></one:Section>
+            </one:Notebook>
+            """).Select(r => r.PageId));
+
+    [Fact]
+    public void RanksTitleMatchesFirstThenNewest()
+    {
+        static SearchResult Page(string id, string name, string modified) => new(id, name, "N", "S", modified);
+        var pages = new[] { Page("t-old", "Nick Bushnell - 1:1", "2025"), Page("t-new", "1:1 with nick", "2026"), Page("other", "Nick notes", "2027") };
+        var found = new[] { Page("x-old", "Standup", "2024"), Page("t-new", "1:1 with nick", "2026"), Page("x-new", "Retro", "2026-11") };
+
+        var ranked = Hierarchy.RankSearchResults("nick 1:1", pages, found);
+
+        Assert.Equal(["t-new", "t-old", "x-new", "x-old"], ranked.Select(r => r.PageId));
+        Assert.Equal([true, true, false, false], ranked.Select(r => r.InTitle));
+        Assert.Equal(["x-new", "t-new", "x-old"], Hierarchy.RankSearchResults("nick 1:1", null, found).Select(r => r.PageId));
+    }
+
+    [Theory]
+    [InlineData("\"project plan\"", true)]
+    [InlineData("proj* AND plan", true)]
+    [InlineData("project NOT plan", false)]
+    [InlineData("project NOT draft", false)]
+    [InlineData("project -draft", false)]
+    [InlineData("project OR plan", false)]
+    [InlineData("(project) plan", true)]
+    [InlineData("project - plan", true)]
+    [InlineData("project +plan", false)]
+    [InlineData("title:plan", false)]
+    [InlineData("System.Title:plan", false)]
+    [InlineData("project (NOT draft)", false)]
+    [InlineData("(-draft) project", false)]
+    [InlineData("(-) \"+\" (AND project", true)]
+    [InlineData("\"\" * AND -- ()", false)]
+    public void MatchesTitlesWithoutSearchSyntax(string query, bool matches) =>
+        Assert.Equal(matches, Hierarchy.RankSearchResults(query, [new("p", "Project plan", "N", "S", "2026")], []).Count == 1);
+
+    [Theory]
+    [InlineData("Nick Bushnell - 1:1")]
+    [InlineData("Re: Live search (deleting now)")]
+    [InlineData("Mike + Nick 1:1")]
+    [InlineData("Mike -> Nick sync")]
+    public void MatchesCopiedTitles(string title) =>
+        Assert.Single(Hierarchy.RankSearchResults(title, [new("p", title, "N", "S", "2026")], []));
 }
