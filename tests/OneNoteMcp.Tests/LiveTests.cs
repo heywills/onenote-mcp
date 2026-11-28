@@ -219,6 +219,26 @@ public class LiveTests
         WithCreated(_tools.CreatePageFromMarkdown(SectionId(), title: "Live title-only test (deleting now)"), pageId =>
             Assert.Equal("# Live title-only test (deleting now)", _tools.GetPage(pageId, inline: true)));
 
+    /// <summary>A margin note beside the main text keeps its place through HTML.</summary>
+    [LiveFact]
+    public void RoundTripsPositionedOutlines()
+    {
+        const string html = """
+            <div class="outline" style="position:absolute;left:36pt;top:86.4pt;width:400pt"><p>Main text</p></div>
+            <div class="outline" style="position:absolute;left:500pt;top:120pt;width:200pt"><p>Margin note</p></div>
+            """;
+        WithCreated(_tools.CreatePage(SectionId(), "Live outline test (deleting now)", html), pageId =>
+        {
+            var first = _tools.GetPage(pageId, inline: true, format: "html");
+            Assert.Matches("left:36pt;top:86.4pt;width:400pt;z-index:\\d+\">\n<p>Main text</p>", first);
+            Assert.Matches("left:500pt;top:120pt;width:200pt;z-index:\\d+\">\n<p>Margin note</p>", first);
+
+            static string Collapse(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+            WithCreated(_tools.CreatePage(SectionId(), contentHtml: first), copyId =>
+                Assert.Equal(Collapse(first), Collapse(_tools.GetPage(copyId, inline: true, format: "html"))));
+        });
+    }
+
     /// <summary>OneNote takes the To Do tags that Markdown task items become, and they read back the same.</summary>
     [LiveFact]
     public void RoundTripsTaskItemsThroughOneNote() =>

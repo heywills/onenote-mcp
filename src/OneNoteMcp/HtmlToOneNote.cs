@@ -13,8 +13,9 @@ namespace OneNoteMcp;
 /// </summary>
 /// <remarks>
 /// OneNote's <c>one:T</c> holds inline HTML only. Block elements become OneNote structure:
-/// - <c>p</c>, <c>div</c>, <c>br</c>: one OE per paragraph or line
-/// - <c>h1</c>-<c>h6</c>: OE with a heading QuickStyleDef, and a blank OE before it
+/// - <c>p</c>, <c>div</c>: one OE per paragraph. From Markdown, a <c>br</c> starts a new one.
+/// - <c>h1</c>-<c>h6</c>: OE with a heading QuickStyleDef. From Markdown, a blank OE before it.
+/// - A top-level <c>div class="outline"</c> with <c>left</c> and <c>top</c>: an Outline of its own at that place, such as a margin note
 /// - <c>ul</c>, <c>ol</c>, <c>li</c>: OE with <c>one:List</c>, nested lists in OEChildren
 /// - <c>table</c>: <c>one:Table</c>
 /// - <c>pre</c>: one OE per line, in OneNote's Code style
@@ -66,10 +67,13 @@ public static partial class HtmlToOneNote
         var tagDefs = page.Elements(One + "TagDef").ToList();
         builder.UseTags(PageTags.Definitions(page));
 
-        var outline = new XElement(One + "Outline");
-        var children = new XElement(One + "OEChildren");
-        outline.Add(children);
-        builder.Blocks(body.ChildNodes, children);
+        // Placed outlines, as onenote_get_page's HTML writes margin notes, become outlines of their own
+        var placed = body.Children.Where(IsPlacedOutline).ToList();
+        placed.ForEach(e => e.Remove());
+        var outlines = new List<XElement> { NewOutline(builder, body.ChildNodes, null, 0) };
+        // A div without a z-index stacks above every one with
+        var topZ = placed.Select(div => ZIndex(div.GetAttribute("style"))).Max() ?? 0;
+        outlines.AddRange(placed.Select((div, i) => NewOutline(builder, div.ChildNodes, div.GetAttribute("style"), topZ + i + 1)));
 
         // QuickStyleDefs must sit together, before the content.
         var newDefs = builder.NewStyles.Select(style =>
@@ -91,12 +95,41 @@ public static partial class HtmlToOneNote
         AddDefinitions(page, tagDefs.LastOrDefault(), builder.NewTags, defs.LastOrDefault(), newDefs);
 
         // OneNote rejects an Outline with nothing in it
-        if (children.HasElements)
+        page.Add(outlines.Where(o => o.Element(One + "OEChildren")!.HasElements));
+        return (builder.Embedded, builder.Linked);
+    }
+
+    /// <summary>A <c>z-index</c> up to a million, so the ones numbered after it can't overflow.</summary>
+    private static int? ZIndex(string? style) => int.TryParse(Css.Value(style, "z-index"), out var z) && z is >= 0 and <= 1_000_000 ? z : null;
+
+    /// <summary>A top-level <c>div class="outline"</c> with a <c>left</c> and <c>top</c> in points. Other divs, even with that class, are ordinary blocks.</summary>
+    private static bool IsPlacedOutline(IElement e) =>
+        e.LocalName == "div" && e.ClassList.Contains("outline")
+        && Coordinate(Css.Value(e.GetAttribute("style"), "left")) is not null && Coordinate(Css.Value(e.GetAttribute("style"), "top")) is not null;
+
+    /// <summary>An Outline holding <paramref name="nodes"/>, at the place <paramref name="style"/> gives, if any.</summary>
+    /// <param name="order">The outline's stacking order when the style has no <c>z-index</c></param>
+    /// <remarks>
+    /// - OneNote needs a Size with a height, and a Position with z. It sizes the height to the content itself.
+    /// - A width means a fixed width, as onenote_get_page writes only those. Without one, the outline grows to fit.
+    /// </remarks>
+    private static XElement NewOutline(Builder builder, IEnumerable<INode> nodes, string? style, int order)
+    {
+        var children = new XElement(One + "OEChildren");
+        builder.Blocks(nodes, children);
+        var outline = new XElement(One + "Outline");
+        if (Coordinate(Css.Value(style, "left")) is { } x && Coordinate(Css.Value(style, "top")) is { } y)
         {
-            page.Add(outline);
+            var z = ZIndex(style) ?? order;
+            outline.Add(new XElement(One + "Position", new XAttribute("x", x), new XAttribute("y", y), new XAttribute("z", z)));
+            if (Points(Css.Value(style, "width")) is { } width)
+            {
+                outline.Add(new XElement(One + "Size", new XAttribute("width", width), new XAttribute("height", "20"), new XAttribute("isSetByUser", "true")));
+            }
         }
 
-        return (builder.Embedded, builder.Linked);
+        outline.Add(children);
+        return outline;
     }
 
     /// <summary>Adds new TagDefs and QuickStyleDefs in schema order: TagDefs, then QuickStyleDefs, then the rest.</summary>
@@ -724,11 +757,23 @@ public static partial class HtmlToOneNote
             ? new XElement(One + "Size", new XAttribute("width", width), new XAttribute("height", height), new XAttribute("isSetByUser", "true"))
             : null;
 
-    private static string? Points(string? value) =>
+    /// <summary>A size in points, above zero, as OneNote writes it. Null for anything else.</summary>
+    private static string? Points(string? value) => ParsePoints(value) is { } points && points > 0 ? Format(points) : null;
+
+    /// <summary>A position in points, which can be zero or negative. Null for anything else.</summary>
+    private static string? Coordinate(string? value) => ParsePoints(value) is { } points ? Format(points) : null;
+
+    /// <remarks>
+    /// - Finite and within a million points: OneNote rejects a page with <c>NaN</c> or a huge coordinate.
+    /// </remarks>
+    private static double? ParsePoints(string? value) =>
         value is not null && value.EndsWith("pt", StringComparison.OrdinalIgnoreCase)
-        && double.TryParse(value[..^2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var points) && points > 0
-            ? points.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+        && double.TryParse(value[..^2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var points)
+        && double.IsFinite(points) && Math.Abs(points) <= 1_000_000
+            ? Math.Round(points, 2, MidpointRounding.AwayFromZero) + 0.0 // rounded as written, and -0 made 0
             : null;
+
+    private static string Format(double points) => points.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 
     // Not \s, which would turn a non-breaking space into a plain one
     [GeneratedRegex(@"[ \t\r\n\f]+")]

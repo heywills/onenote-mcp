@@ -314,7 +314,10 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
     // Write
 
     [McpServerTool(Name = "onenote_create_page", Destructive = false)]
-    [Description("Create a new page in a section from HTML, such as a page onenote_get_page saved with format=html.")]
+    [Description("""
+        Create a new page in a section from HTML, such as a page onenote_get_page saved with format=html.
+        A top-level <div class="outline"> with left and top in points becomes a note container at that place. On such a page, add text inside a div: text outside them lands at OneNote's default spot, over the main text.
+        """)]
     public string CreatePage(
         [Description("The section ID")] string sectionId,
         [Description("Page title. Empty to use the HTML's <title>.")] string title = "",

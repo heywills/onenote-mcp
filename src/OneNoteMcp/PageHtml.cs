@@ -13,7 +13,8 @@ namespace OneNoteMcp;
 /// - OneNote stores text as HTML, so inline formatting passes through as OneNote wrote it.
 /// - Paragraph formatting comes from the OE: its style, alignment, and QuickStyleDef (headings, quote, code).
 /// - onenote_create_page reads this HTML back, taking the title from <c>&lt;title&gt;</c>.
-/// - Tags, ink, and paragraph spacing aren't kept.
+/// - A page with several outlines, such as margin notes beside the main text, writes each, and each image placed on the page, as a <c>div class="outline"</c> at its place.
+/// - Ink and paragraph spacing aren't kept.
 /// </remarks>
 public static class PageHtml
 {
@@ -23,18 +24,24 @@ public static class PageHtml
         var root = XElement.Parse(xml);
         var (title, styles, repeatedTitle) = PageMarkdown.Parts(root);
         var writer = new Writer(styles, repeatedTitle, imageHtml ?? (img => ImageTag(img, null)), PageTags.Definitions(root));
-        foreach (var outline in root.Descendants(One + "Outline"))
+        var outlines = root.Descendants(One + "Outline").ToList();
+        // A single outline flows as the page. Several with content keep their places, so a note stays beside its text.
+        var placed = outlines.Count(o => HasContent(o, repeatedTitle)) > 1;
+        foreach (var outline in outlines)
         {
-            foreach (var children in outline.Elements(One + "OEChildren"))
+            Place(writer, outline, placed, () =>
             {
-                writer.Blocks(children);
-            }
+                foreach (var children in outline.Elements(One + "OEChildren"))
+                {
+                    writer.Blocks(children);
+                }
+            });
         }
 
-        // Images outside outlines
-        foreach (var img in root.Descendants(One + "Image").Where(i => i.Ancestors(One + "Outline").FirstOrDefault() is null))
+        // Images outside outlines, at their own places when the outlines have theirs
+        foreach (var img in root.Descendants(One + "Image").Where(i => i.Ancestors(One + "Outline").FirstOrDefault() is null && CallbackId(i) is not null))
         {
-            writer.Image(img);
+            Place(writer, img, placed, () => writer.Image(img));
         }
 
         var html = $"""
@@ -51,6 +58,61 @@ public static class PageHtml
             """;
         return (html.Replace("\r\n", "\n"), writer.Images);
     }
+
+    /// <summary>Writes an outline or page-level image, in a <c>div class="outline"</c> at its place when <paramref name="placed"/>.</summary>
+    /// <remarks>
+    /// - Something with no place flows with the page, as it reads back into OneNote's default outline.
+    /// </remarks>
+    private static void Place(Writer writer, XElement element, bool placed, Action write)
+    {
+        var style = placed ? PlaceStyle(element) : null;
+        if (style is not null)
+        {
+            writer.Raw($"<div class=\"outline\" style=\"{style}\">\n");
+        }
+
+        write();
+        if (style is not null)
+        {
+            writer.Raw("</div>\n");
+        }
+    }
+
+    /// <summary>An element's place on the page in points, its fixed width, and its stacking order, as CSS. Null when OneNote gave no place.</summary>
+    /// <remarks>
+    /// - The width only when the user set it. Otherwise OneNote grows the outline to fit, and so does the browser.
+    /// </remarks>
+    private static string? PlaceStyle(XElement element)
+    {
+        if (element.Element(One + "Position") is not { } position
+            || ToDouble(position.Attribute("x")) is not { } x || ToDouble(position.Attribute("y")) is not { } y)
+        {
+            return null;
+        }
+
+        var width = element.Element(One + "Size") is { } size && (string?)size.Attribute("isSetByUser") == "true" && ToDouble(size.Attribute("width")) is { } w
+            ? $";width:{Points(w)}"
+            : "";
+        var z = int.TryParse((string?)position.Attribute("z"), out var index) ? $";z-index:{index}" : "";
+        return $"position:absolute;left:{Points(x)};top:{Points(y)}{width}{z}";
+    }
+
+    /// <summary>Whether an outline holds text, a tag, an image, a table, or a file. A click on the canvas can leave an empty one behind.</summary>
+    /// <param name="repeatedTitle">The first line when it only repeats the title, which the writer skips</param>
+    private static bool HasContent(XElement outline, XElement? repeatedTitle) =>
+        outline.Descendants().Any(e => e.Name.LocalName is "Image" or "Table" or "InsertedFile" or "MediaFile" or "Tag")
+        || outline.Descendants(One + "T").Any(t => t.Parent != repeatedTitle && !string.IsNullOrWhiteSpace(PageMarkdown.CleanText(t.Value)));
+
+    /// <summary>The ID the image tools fetch an image by, or null when OneNote gave none.</summary>
+    private static string? CallbackId(XElement img) =>
+        (string?)img.Element(One + "CallbackID")?.Attribute("callbackID") ?? (string?)img.Attribute("callbackID");
+
+    // Rounded first, so a tiny negative value writes 0, not -0
+    private static string Points(double value) =>
+        $"{(Math.Round(value, 2, MidpointRounding.AwayFromZero) + 0.0).ToString("0.##", CultureInfo.InvariantCulture)}pt";
+
+    private static double? ToDouble(XAttribute? a) =>
+        double.TryParse((string?)a, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : null;
 
     /// <summary>An <c>img</c> for a saved image, or with its callback ID when <paramref name="src"/> is null.</summary>
     /// <remarks>
@@ -230,7 +292,7 @@ public static class PageHtml
 
         public void Image(XElement img)
         {
-            var id = (string?)img.Element(One + "CallbackID")?.Attribute("callbackID") ?? (string?)img.Attribute("callbackID");
+            var id = CallbackId(img);
             if (id is null)
             {
                 return;
@@ -247,9 +309,6 @@ public static class PageHtml
 
             _html.Append($"<p>{imageHtml(reference)}</p>\n");
         }
-
-        private static double? ToDouble(XAttribute? a) =>
-            double.TryParse((string?)a, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : null;
 
         /// <remarks>
         /// - The header row is <c>th</c> only when OneNote marks it as one.
@@ -280,6 +339,9 @@ public static class PageHtml
 
             _html.Append("</table>\n");
         }
+
+        /// <summary>Writes markup as is, such as an outline's <c>div</c>.</summary>
+        public void Raw(string html) => _html.Append(html);
 
         public override string ToString() => _html.ToString();
     }
