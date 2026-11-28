@@ -22,7 +22,7 @@ public static class PageHtml
     {
         var root = XElement.Parse(xml);
         var (title, styles, repeatedTitle) = PageMarkdown.Parts(root);
-        var writer = new Writer(styles, repeatedTitle, imageHtml ?? (img => ImageTag(img, null)));
+        var writer = new Writer(styles, repeatedTitle, imageHtml ?? (img => ImageTag(img, null)), PageTags.Definitions(root));
         foreach (var outline in root.Descendants(One + "Outline"))
         {
             foreach (var children in outline.Elements(One + "OEChildren"))
@@ -78,8 +78,13 @@ public static class PageHtml
 
     private static string Encode(string text) => WebUtility.HtmlEncode(text);
 
-    private sealed class Writer(Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle, Func<ImageRef, string> imageHtml)
+    /// <param name="tagDefinitions">The page's tags by index</param>
+    private sealed class Writer(
+        Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle, Func<ImageRef, string> imageHtml, Dictionary<string, Tag> tagDefinitions)
     {
+        /// <summary>The OE's tags as a checkbox or label, before its text.</summary>
+        private string TagHtml(XElement oe) => PageTags.Html(PageTags.Of(oe, tagDefinitions));
+
         private readonly StringBuilder _html = new();
 
         public List<ImageRef> Images { get; } = [];
@@ -128,7 +133,7 @@ public static class PageHtml
                     _html.Append(kind == "ol" && Start(oes[0]) is { } start and not 1 ? $"<ol start=\"{start}\">\n" : $"<{kind}>\n");
                     foreach (var oe in oes)
                     {
-                        _html.Append($"<li{Style(oe)}>{Text(oe)}");
+                        _html.Append($"<li{Style(oe)}>{TagHtml(oe)}{Text(oe)}");
                         Content(oe, indent: false);
                         _html.Append("</li>\n");
                     }
@@ -171,7 +176,7 @@ public static class PageHtml
                 var tag = StyleName(oe) is { Length: 2 } name && name[0] == 'h' && char.IsDigit(name[1]) ? name : "p";
                 // A browser shows an empty <p> with no height
                 var text = Text(oe) is var t && tag == "p" && string.IsNullOrWhiteSpace(t) ? "<br>" : t;
-                _html.Append($"<{tag}{Style(oe)}>{text}</{tag}>\n");
+                _html.Append($"<{tag}{Style(oe)}>{TagHtml(oe)}{text}</{tag}>\n");
             }
 
             // The repeated title's children aren't indented under anything shown

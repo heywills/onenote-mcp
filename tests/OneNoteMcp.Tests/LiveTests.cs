@@ -219,6 +219,12 @@ public class LiveTests
         WithCreated(_tools.CreatePageFromMarkdown(SectionId(), title: "Live title-only test (deleting now)"), pageId =>
             Assert.Equal("# Live title-only test (deleting now)", _tools.GetPage(pageId, inline: true)));
 
+    /// <summary>OneNote takes the To Do tags that Markdown task items become, and they read back the same.</summary>
+    [LiveFact]
+    public void RoundTripsTaskItemsThroughOneNote() =>
+        WithPage($"# Live tag test (deleting now)\n\n{TagTests.TaskMarkdown}", pageId =>
+            Assert.Equal($"# Live tag test (deleting now)\n\n{TagTests.TaskMarkdown}", _tools.GetPage(pageId, inline: true)));
+
     // Windows Search hasn't indexed a new page, so only title search finds it
     [LiveFact]
     public void FindsNewPagesByTitle()
@@ -384,12 +390,16 @@ public class LiveTests
             <table><tr><th>Head</th></tr><tr><td style="background-color:#DDEBF7">Shaded</td></tr></table>
             <pre>A
             B</pre><div class="indent"><p>Under B</p></div><pre>C</pre>
+            <p><input type="checkbox" checked data-tag="Attendance" data-tag-type="106" data-tag-symbol="94"> Attended</p>
+            <p><span class="tag" data-tag="Important" data-tag-type="1" data-tag-symbol="13">[Important]</span> Key point</p>
             """;
         WithCreated(_tools.CreatePage(SectionId(), "Live HTML round trip (deleting now)", html), pageId =>
         {
             var first = _tools.GetPage(pageId, inline: true, format: "html");
             // One code block, split to show the indent, with no blank line added
             Assert.Contains("</div>\n<pre>\nC</pre>", first);
+            Assert.Contains("<input type=\"checkbox\" disabled checked data-tag=\"Attendance\" data-tag-type=\"106\" data-tag-symbol=\"94\"> Attended", first);
+            Assert.Contains(">[Important]</span> Key point", first);
             // OneNote writes #FF0000 as red, and copies the alignment into the style
             Assert.Contains("text-align:center\"", first);
             Assert.DoesNotContain("text-align:center;text-align", first);

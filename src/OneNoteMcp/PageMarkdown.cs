@@ -30,7 +30,7 @@ public static partial class PageMarkdown
     {
         var root = XElement.Parse(xml);
         var (title, styles, repeatedTitle) = Parts(root);
-        var writer = new Writer(styles, repeatedTitle, imageMarkdown ?? (img => $"[Image {img.Index}]"));
+        var writer = new Writer(styles, repeatedTitle, imageMarkdown ?? (img => $"[Image {img.Index}]"), PageTags.Definitions(root));
         foreach (var outline in root.Descendants(One + "Outline"))
         {
             writer.NewOutline();
@@ -129,7 +129,9 @@ public static partial class PageMarkdown
     public static string CleanText(string text) =>
         System.Net.WebUtility.HtmlDecode(Tags().Replace(text, "")).Replace('\u00A0', ' ');
 
-    private sealed class Writer(Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle, Func<ImageRef, string> imageMarkdown)
+    /// <param name="tagDefinitions">The page's tags by index</param>
+    private sealed class Writer(
+        Dictionary<string, (string Name, bool Italic)> styles, XElement? repeatedTitle, Func<ImageRef, string> imageMarkdown, Dictionary<string, Tag> tagDefinitions)
     {
         private readonly List<string> _lines = [];
         private string _kind = "";
@@ -203,7 +205,7 @@ public static partial class PageMarkdown
 
             if (hasText)
             {
-                Text(oe, (styleName, styleItalic), indent, prefix, marker, quote);
+                Text(oe, (styleName, styleItalic), indent, prefix, marker, quote, PageTags.Markdown(PageTags.Of(oe, tagDefinitions)));
             }
 
             Children(oe, childIndent, quoteColumn);
@@ -248,7 +250,12 @@ public static partial class PageMarkdown
             return digits + (alt ? ") " : ". ");
         }
 
-        private void Text(XElement oe, (string Name, bool Italic) style, string indent, string prefix, string? marker, bool quote)
+        /// <param name="tags">The OE's checkbox and marker labels, from <see cref="PageTags.Markdown"/></param>
+        /// <remarks>
+        /// - A checkbox makes a task item. A plain paragraph with one becomes a <c>- [ ]</c> item, since Markdown checkboxes live in lists.
+        /// - Code lines and blank lines drop their tags.
+        /// </remarks>
+        private void Text(XElement oe, (string Name, bool Italic) style, string indent, string prefix, string? marker, bool quote, (string? Box, string Labels) tags)
         {
             var html = OeHtml(oe);
             if (style.Name == "code" && marker is null)
@@ -259,10 +266,15 @@ public static partial class PageMarkdown
 
             // OneNote copies an italic style's italic onto the text, such as its own Quote, h4, and h6.
             var text = InlineMarkdown(html, (string?)oe.Attribute("style") ?? "", ignoreUniformItalic: style.Italic).Trim();
+            if (text.Length > 0)
+            {
+                text = tags.Labels + text;
+            }
+
             var heading = Regex.Match(style.Name, "^h([1-6])$");
             if (marker is not null)
             {
-                ListItem(prefix, marker, EscapeLineStart(text), quote);
+                ListItem(prefix, marker, tags.Box + EscapeLineStart(text), quote);
             }
             else if (text.Length == 0)
             {
@@ -270,7 +282,11 @@ public static partial class PageMarkdown
             }
             else if (heading.Success)
             {
-                Paragraph(indent, $"{new string('#', int.Parse(heading.Groups[1].Value))} {EscapeClosingHashes(text)}", false);
+                Paragraph(indent, $"{new string('#', int.Parse(heading.Groups[1].Value))} {tags.Box}{EscapeClosingHashes(text)}", false);
+            }
+            else if (tags.Box is not null)
+            {
+                Paragraph(prefix, $"- {tags.Box}{EscapeLineStart(text)}", quote);
             }
             else
             {

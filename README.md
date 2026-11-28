@@ -31,7 +31,12 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 - Table header rows and cell shading
 - Image sizes
 
-`onenote_create_page` reads it back, with the title from `<title>`. Tags, ink, and paragraph spacing aren't kept. OneNote also rewrites some markup (`#FF0000` becomes `red`) and drops trailing spaces.
+`onenote_create_page` reads it back, with the title from `<title>`. Ink and paragraph spacing aren't kept.
+
+Tags:
+- Checkbox tags (To Do, Attendance) are task items in Markdown, `- [ ]` and `- [x]`. Creating a page from Markdown turns task items into To Do checkboxes.
+- Other tags (Important, Question) are their name in brackets, such as `[Important]`. Creating from Markdown keeps that as text.
+- HTML keeps every tag as a checkbox or label with `data-tag` attributes, so `onenote_create_page` restores them. OneNote also rewrites some markup (`#FF0000` becomes `red`) and drops trailing spaces.
 
 `onenote_create_page` and `onenote_create_page_from_markdown` take the body inline or from `inputPath`, an absolute UTF-8 file path. They embed local images:
 - From a file: only images inside the file's folder, by relative path

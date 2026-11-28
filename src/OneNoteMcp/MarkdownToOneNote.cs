@@ -11,10 +11,11 @@ public static class MarkdownToOneNote
 {
     private const char ByteOrderMark = '\uFEFF';
 
-    /// <summary>Pipe tables and strikethrough.</summary>
+    /// <summary>Pipe tables, strikethrough, and task items, which become To Do checkboxes.</summary>
     /// <remarks>The other emphasis extras would make ~, ^, ++, and == into formatting.</remarks>
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UsePipeTables()
+        .UseTaskLists()
         .UseEmphasisExtras(Markdig.Extensions.EmphasisExtras.EmphasisExtraOptions.Strikethrough)
         .Build();
 
