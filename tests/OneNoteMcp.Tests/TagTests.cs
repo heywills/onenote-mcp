@@ -90,18 +90,20 @@ public class TagTests
     public void KeepsLinksLabelledX()
     {
         var page = $"""
-            <one:Page xmlns:one="{One}" name="P"><one:Title/><one:Outline><one:OEChildren>
+            <one:Page xmlns:one="{One}" name="P"><one:TagDef index="0" type="0" symbol="3" name="To Do"/><one:Title/><one:Outline><one:OEChildren>
               <one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T><![CDATA[<a href="https://x.test/">x</a> marks it]]></one:T></one:OE>
+              <one:OE><one:Tag index="0" completed="false"/><one:T><![CDATA[<a href="https://z.test/">x</a> to do]]></one:T></one:OE>
               <one:OE><one:List><one:Bullet bullet="2"/></one:List><one:T><![CDATA[<a href="https://y.test/"> </a> blank]]></one:T></one:OE>
             </one:OEChildren></one:Outline></one:Page>
             """;
 
         var markdown = PageMarkdown.Convert(page).Markdown;
         // A space label is trimmed to [](url), which isn't a checkbox
-        Assert.Equal("# P\n\n- [&#120;](https://x.test/) marks it\n- [](https://y.test/) blank", markdown);
+        Assert.Equal("# P\n\n- [&#120;](https://x.test/) marks it\n- [ ] [&#120;](https://z.test/) to do\n- [](https://y.test/) blank", markdown);
         var created = Create(MarkdownToOneNote.ToHtml(markdown[5..]), fromMarkdown: true);
-        Assert.Empty(created.Descendants(One + "Tag"));
-        Assert.Equal(2, created.Descendants(One + "T").Count(t => t.Value.Contains("<a href=")));
+        // One To Do, on the item that had it, and every link kept
+        Assert.Equal("false", created.Descendants(One + "Tag").Single().Attribute("completed")!.Value);
+        Assert.Equal(3, created.Descendants(One + "T").Count(t => t.Value.Contains("<a href=")));
     }
 
     [Fact]

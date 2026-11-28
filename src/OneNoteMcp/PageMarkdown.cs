@@ -201,7 +201,7 @@ public static partial class PageMarkdown
             var childIndent = listItem ? indent + new string(' ', marker!.Length) : indent;
             if (listItem && !hasText)
             {
-                ListItem(prefix, marker!, $"{tags.Box}{tags.Labels}".TrimEnd(), quote);
+                ListItem(prefix, marker!, $"{tags.Box}{EscapeTaskMarker(tags.Labels)}".TrimEnd(), quote);
             }
 
             if (hasText)
@@ -265,7 +265,7 @@ public static partial class PageMarkdown
         /// <remarks>
         /// - A checkbox makes a task item. A plain paragraph with one already has a bullet marker, from <see cref="IsTaskParagraph"/>.
         /// - Code lines and blank lines drop their tags, and headings drop the checkbox.
-        /// - An untagged item whose text starts with <c>[ ]</c> or <c>[x]</c> is escaped, or it would read back as a task.
+        /// - Item text that starts with <c>[ ]</c> or <c>[x]</c> is escaped, even after a checkbox, or Markdig would read another checkbox.
         /// </remarks>
         private void Text(XElement oe, (string Name, bool Italic) style, string indent, string prefix, string? marker, bool quote, (string? Box, string Labels) tags)
         {
@@ -288,7 +288,7 @@ public static partial class PageMarkdown
             if (marker is not null)
             {
                 var body = EscapeLineStart(text);
-                ListItem(prefix, marker, (tags.Box is null ? EscapeTaskMarker(body) : tags.Box + body).TrimEnd(), quote);
+                ListItem(prefix, marker, (tags.Box + EscapeTaskMarker(body)).TrimEnd(), quote);
             }
             else if (text.Length == 0)
             {
