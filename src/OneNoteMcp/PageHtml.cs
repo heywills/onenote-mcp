@@ -72,8 +72,9 @@ public static class PageHtml
         return extension == "bin" ? $"<a href=\"{Encode(src)}\">Image {img.Index}: unsupported type</a>" : ImageTag(img, src);
     }
 
-    /// <summary>Text for an image that couldn't be saved, with the reason.</summary>
-    public static string ImageProblem(int index, string reason) => Encode($"[Image {index}: {reason}]");
+    /// <summary>Text for an image that couldn't be saved, with the reason and the image's text.</summary>
+    public static string ImageProblem(int index, string reason, string? text = null) =>
+        Encode($"[Image {index}: {PageMarkdown.ProblemText(reason, text)}]");
 
     private static string Encode(string text) => WebUtility.HtmlEncode(text);
 
@@ -235,7 +236,7 @@ public static class PageHtml
             if (reference is null)
             {
                 var size = img.Element(One + "Size");
-                reference = new ImageRef(id, Images.Count + 1, ToDouble(size?.Attribute("width")), ToDouble(size?.Attribute("height")));
+                reference = new ImageRef(id, Images.Count + 1, ToDouble(size?.Attribute("width")), ToDouble(size?.Attribute("height")), PageMarkdown.ImageText(img));
                 Images.Add(reference);
             }
 

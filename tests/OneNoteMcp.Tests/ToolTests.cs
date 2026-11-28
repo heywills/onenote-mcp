@@ -64,14 +64,14 @@ public sealed class ToolTests : IDisposable
     [Fact]
     public void SavesPagesWithImagesItCantRead()
     {
-        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1") + Image("cb2")));
-        _oneNote.Image = ImagesOf("page", id => id == "cb1" ? throw new McpException("OneNote returned no image data") : Png);
+        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1", "Rental\nOptions") + Image("cb2")));
+        _oneNote.Image = ImagesOf("page", id => id == "cb1" ? throw new McpException("OneNote returned no image data.") : Png);
 
         var saved = Save("page.md");
 
         Assert.Equal((1, 1), (saved.GetProperty("images").GetInt32(), saved.GetProperty("missing_images").GetInt32()));
         var markdown = File.ReadAllText(Path.Combine(_folder, "page.md"));
-        Assert.Contains("[Image 1: OneNote returned no image data]", markdown);
+        Assert.Contains("[Image 1: OneNote returned no image data. Text in image: \"Rental Options\"]", markdown);
         Assert.Contains("page_images/image-2.png", markdown);
         Assert.True(File.Exists(Path.Combine(_folder, "page_images", "image-2.png")));
     }
@@ -79,7 +79,7 @@ public sealed class ToolTests : IDisposable
     [Fact]
     public void SavesPagesWhenAnImageCantBeWritten()
     {
-        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1")));
+        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1", "Q&A")));
         _oneNote.Image = ImagesOf("page", _ => Png);
         // A file where the image folder goes
         Directory.CreateDirectory(_folder);
@@ -88,7 +88,9 @@ public sealed class ToolTests : IDisposable
         var saved = Save("page.html", format: "html");
 
         Assert.Equal((0, 1), (saved.GetProperty("images").GetInt32(), saved.GetProperty("missing_images").GetInt32()));
-        Assert.Contains("[Image 1: Can&#39;t save", File.ReadAllText(Path.Combine(_folder, "page.html")));
+        var html = File.ReadAllText(Path.Combine(_folder, "page.html"));
+        Assert.Contains("[Image 1: Can&#39;t save", html);
+        Assert.Contains("Text in image: &quot;Q&amp;A&quot;]", html);
     }
 
     [Fact]
@@ -175,13 +177,13 @@ public sealed class ToolTests : IDisposable
     [Fact]
     public void ReturnsTheImagesItCanRead()
     {
-        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1") + Image("cb2")));
+        _oneNote.PageContent = Only("page", FakeOneNote.Page(Image("cb1", "Demo SI") + Image("cb2")));
         _oneNote.Image = ImagesOf("page", id => id == "cb1" ? throw new McpException("Not downloaded") : PngImage());
 
         var blocks = _tools.GetPageImages("page").ToList();
 
         Assert.Collection(blocks,
-            b => Assert.Equal("[Image 1] Error: Not downloaded", Assert.IsType<TextContentBlock>(b).Text),
+            b => Assert.Equal("[Image 1] Error: Not downloaded. Text in image: \"Demo SI\"", Assert.IsType<TextContentBlock>(b).Text),
             b => Assert.Equal("[Image 2] (callback_id: cb2)", Assert.IsType<TextContentBlock>(b).Text),
             b => Assert.IsType<ImageContentBlock>(b));
     }
@@ -237,8 +239,9 @@ public sealed class ToolTests : IDisposable
     private static Func<string, string, byte[]> ImagesOf(string pageId, Func<string, byte[]> image) =>
         (id, callbackId) => id == pageId ? image(callbackId) : throw new InvalidOperationException($"Read an image of page {id}, expected {pageId}");
 
-    private static string Image(string callbackId) =>
-        $"""<one:OE><one:Image><one:CallbackID callbackID="{callbackId}"/></one:Image></one:OE>""";
+    /// <param name="text">The text OneNote recognized in the image</param>
+    private static string Image(string callbackId, string? text = null) =>
+        $"""<one:OE><one:Image>{(text is null ? "" : $"<one:OCRData lang=\"en-US\"><one:OCRText><![CDATA[{text}]]></one:OCRText></one:OCRData>")}<one:CallbackID callbackID="{callbackId}"/></one:Image></one:OE>""";
 
     private static string Pages(params (string Id, string Name)[] pages) => $"""
         <one:Notebooks xmlns:one="{FakeOneNote.Ns}"><one:Notebook name="N" ID="nb"><one:Section name="S" ID="s">

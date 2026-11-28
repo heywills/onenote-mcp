@@ -115,7 +115,7 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
         var saved = images.ToDictionary(img => img.CallbackId, img => SaveImage(pageId, img, outputPath, folder));
         string Markup(ImageRef img) => saved[img.CallbackId] switch
         {
-            { Problem: { } problem } => html ? PageHtml.ImageProblem(img.Index, problem) : PageMarkdown.ImageProblem(img.Index, problem),
+            { Problem: { } problem } => html ? PageHtml.ImageProblem(img.Index, problem, img.Text) : PageMarkdown.ImageProblem(img.Index, problem, img.Text),
             { Extension: var extension } => html ? PageHtml.ImageLink(img, folder, extension) : PageMarkdown.ImageLink(img.Index, folder, extension),
         };
 
@@ -275,7 +275,7 @@ public sealed class OneNoteTools(IOneNoteClient oneNote)
             }
             catch (McpException e)
             {
-                block = Text($"[Image {img.Index}] Error: {e.Message}");
+                block = Text($"[Image {img.Index}] Error: {PageMarkdown.ProblemText(e.Message, img.Text)}");
             }
 
             if (block is ImageContentBlock)

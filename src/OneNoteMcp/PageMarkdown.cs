@@ -7,7 +7,9 @@ using static OneNoteMcp.Hierarchy;
 
 namespace OneNoteMcp;
 
-public sealed record ImageRef(string CallbackId, int Index, double? Width, double? Height);
+/// <summary>An image on a page.</summary>
+/// <param name="Text">The text OneNote recognized in the image, on one line. Null when there's none.</param>
+public sealed record ImageRef(string CallbackId, int Index, double? Width, double? Height, string? Text = null);
 
 /// <summary>
 /// Converts OneNote page XML to Markdown plus image references.
@@ -79,9 +81,25 @@ public static partial class PageMarkdown
         return extension == "bin" ? $"[Image {index}: unsupported type]({link})" : $"![Image {index}]({link})";
     }
 
-    /// <summary>Markdown for an image that couldn't be saved, with the reason as plain text on one line.</summary>
-    public static string ImageProblem(int index, string reason) =>
-        $"[Image {index}: {Escape(Whitespace().Replace(reason, " ").Trim().Replace(']', ')'))}]";
+    /// <summary>Markdown for an image that couldn't be saved, with the reason and the image's text as plain text on one line.</summary>
+    public static string ImageProblem(int index, string reason, string? text = null) =>
+        $"[Image {index}: {Escape(ProblemText(reason, text).Replace(']', ')'))}]";
+
+    /// <summary>Why an image is missing, on one line, plus the text OneNote recognized in it.</summary>
+    /// <remarks>
+    /// - OneNote can keep an image's text without the image, as on older cloud notebooks, so the text is often all an agent gets.
+    /// </remarks>
+    internal static string ProblemText(string reason, string? text)
+    {
+        var line = Whitespace().Replace(reason, " ").Trim();
+        return text is null ? line : $"{line.TrimEnd('.')}. Text in image: \"{text}\"";
+    }
+
+    /// <summary>The text OneNote recognized in an image, on one line, or null.</summary>
+    internal static string? ImageText(XElement img) =>
+        img.Element(One + "OCRData")?.Element(One + "OCRText")?.Value is { } text && Whitespace().Replace(text, " ").Trim() is { Length: > 0 } line
+            ? line
+            : null;
 
     /// <summary>
     /// Strips the inline HTML OneNote keeps inside text elements.
@@ -280,7 +298,7 @@ public static partial class PageMarkdown
             if (reference is null)
             {
                 var size = img.Element(One + "Size");
-                reference = new ImageRef(id, Images.Count + 1, ToDouble(size?.Attribute("width")), ToDouble(size?.Attribute("height")));
+                reference = new ImageRef(id, Images.Count + 1, ToDouble(size?.Attribute("width")), ToDouble(size?.Attribute("height")), ImageText(img));
                 Images.Add(reference);
             }
 

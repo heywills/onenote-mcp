@@ -60,7 +60,7 @@ Forked from [wgthomas/onenote-mcp](https://github.com/wgthomas/onenote-mcp) (MIT
 ## Notes
 
 - Search matches titles containing every query word, then text through Windows Search (indexed pages only). Skips deleted pages. A query with `OR`, `NOT`, `-word`, `+word`, or a property filter such as `author:x` searches text only.
-- Images OneNote hasn't downloaded yet return an error from the image tools, and show as `[Image N: reason]` in saved pages. Open the page in OneNote desktop, then retry.
+- Images OneNote hasn't downloaded yet return an error from the image tools, and show as `[Image N: reason]` in saved pages, with any text OneNote recognized in the image. Open the page in OneNote desktop, then retry.
 - Markdown that OneNote can't hold:
   - Indented paragraphs outside a list come back flush, because indented Markdown reads as code.
   - Numbered lists start at 1. OneNote numbers lists itself, so separate lists alternate between `1.` and `1)` in OneNote to restart.
