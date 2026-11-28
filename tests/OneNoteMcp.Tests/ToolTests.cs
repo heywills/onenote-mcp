@@ -1,0 +1,152 @@
+using System.Text.Json;
+using Microsoft.Office.Interop.OneNote;
+using ModelContextProtocol;
+
+namespace OneNoteMcp.Tests;
+
+/// <summary>
+/// Tool behavior when OneNote or the file system fails, with <see cref="FakeOneNote"/> in place of OneNote.
+/// </summary>
+public sealed class ToolTests : IDisposable
+{
+    private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    private readonly FakeOneNote _oneNote = new();
+    private readonly OneNoteTools _tools;
+    private readonly string _folder = Path.Combine(Path.GetTempPath(), $"onenote-mcp-test-{Guid.NewGuid():N}");
+
+    public ToolTests() => _tools = new(_oneNote);
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_folder))
+        {
+            Directory.Delete(_folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void DeletesTheNewPageWhenTheUpdateFails()
+    {
+        _oneNote.NewPage = _ => "new";
+        _oneNote.PageContent = _ => FakeOneNote.Page();
+        _oneNote.Update = _ => throw new McpException("Update failed");
+
+        Assert.Equal("Update failed", Assert.Throws<McpException>(() => _tools.CreatePage("section", "T", "<p>x</p>")).Message);
+        Assert.Equal([("new", true)], _oneNote.Deleted);
+    }
+
+    [Fact]
+    public void ReportsTheUpdateErrorWhenCleanupAlsoFails()
+    {
+        _oneNote.NewPage = _ => "new";
+        _oneNote.PageContent = _ => FakeOneNote.Page();
+        _oneNote.Update = _ => throw new McpException("Update failed");
+        _oneNote.Delete = (_, _) => throw new McpException("Delete failed");
+
+        Assert.Equal("Update failed", Assert.Throws<McpException>(() => _tools.CreatePage("section", "T", "<p>x</p>")).Message);
+    }
+
+    [Fact]
+    public void SavesPagesWithImagesItCantRead()
+    {
+        _oneNote.PageContent = _ => FakeOneNote.Page(Image("cb1") + Image("cb2"));
+        _oneNote.Image = (_, id) => id == "cb1" ? throw new McpException("OneNote returned no image data") : Png;
+
+        var saved = Save("page.md");
+
+        Assert.Equal((1, 1), (saved.GetProperty("images").GetInt32(), saved.GetProperty("missing_images").GetInt32()));
+        var markdown = File.ReadAllText(Path.Combine(_folder, "page.md"));
+        Assert.Contains("[Image 1: OneNote returned no image data]", markdown);
+        Assert.Contains("page_images/image-2.png", markdown);
+        Assert.True(File.Exists(Path.Combine(_folder, "page_images", "image-2.png")));
+    }
+
+    [Fact]
+    public void SavesPagesWhenAnImageCantBeWritten()
+    {
+        _oneNote.PageContent = _ => FakeOneNote.Page(Image("cb1"));
+        _oneNote.Image = (_, _) => Png;
+        // A file where the image folder goes
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path.Combine(_folder, "page_images"), "");
+
+        var saved = Save("page.html", format: "html");
+
+        Assert.Equal((0, 1), (saved.GetProperty("images").GetInt32(), saved.GetProperty("missing_images").GetInt32()));
+        Assert.Contains("[Image 1: Can&#39;t save", File.ReadAllText(Path.Combine(_folder, "page.html")));
+    }
+
+    [Fact]
+    public void SearchesTextWhenThePagesCantBeListed()
+    {
+        _oneNote.Hierarchy = (_, _) => throw new McpException("Notebook offline");
+        _oneNote.Find = (_, _) => Pages(("text", "Notes"));
+
+        var found = Search("project");
+
+        Assert.Equal((false, true), (found.GetProperty("title_search").GetBoolean(), found.GetProperty("text_search").GetBoolean()));
+        Assert.Equal(["text"], Ids(found));
+    }
+
+    [Fact]
+    public void SearchesTitlesWhenWindowsSearchFails()
+    {
+        _oneNote.Hierarchy = (_, _) => Pages(("title", "Project plan"), ("other", "Notes"));
+        _oneNote.Find = (_, _) => throw new McpException("Windows Search is off");
+
+        var found = Search("project");
+
+        Assert.Equal((true, false), (found.GetProperty("title_search").GetBoolean(), found.GetProperty("text_search").GetBoolean()));
+        Assert.Equal(["title"], Ids(found));
+    }
+
+    [Theory]
+    [InlineData("project")] // both fail
+    [InlineData("project OR plan")] // text search only, so nothing to fall back on
+    public void FailsWhenNoSearchWorks(string query)
+    {
+        _oneNote.Hierarchy = (_, _) => throw new McpException("Notebook offline");
+        _oneNote.Find = (_, _) => throw new McpException("Windows Search is off");
+
+        Assert.Equal("Windows Search is off", Assert.Throws<McpException>(() => _tools.Search(query)).Message);
+    }
+
+    [Theory]
+    [InlineData("""<one:Section xmlns:one="{0}" ID="x" name="S"/>""", "Not a page: Section")]
+    [InlineData("""<one:Page xmlns:one="{0}" ID="x" name="P" isInRecycleBin="true"/>""", "already in Deleted Pages")]
+    public void DeletesPagesOnly(string self, string error)
+    {
+        _oneNote.Hierarchy = (_, _) => string.Format(self, FakeOneNote.Ns);
+
+        Assert.Contains(error, Assert.Throws<McpException>(() => _tools.DeletePage("x")).Message);
+        Assert.Empty(_oneNote.Deleted);
+    }
+
+    [Fact]
+    public void MovesPagesToDeletedPages()
+    {
+        _oneNote.Hierarchy = (_, scope) => scope == HierarchyScope.hsSelf
+            ? $"""<one:Page xmlns:one="{FakeOneNote.Ns}" ID="x" name="P"/>""" : throw new McpException("Unexpected scope");
+
+        Assert.Contains("moved to Deleted Pages", _tools.DeletePage("x"));
+        Assert.Equal([("x", false)], _oneNote.Deleted);
+    }
+
+    private static string Image(string callbackId) =>
+        $"""<one:OE><one:Image><one:CallbackID callbackID="{callbackId}"/></one:Image></one:OE>""";
+
+    private static string Pages(params (string Id, string Name)[] pages) => $"""
+        <one:Notebooks xmlns:one="{FakeOneNote.Ns}"><one:Notebook name="N" ID="nb"><one:Section name="S" ID="s">
+        {string.Concat(pages.Select(p => $"""<one:Page ID="{p.Id}" name="{p.Name}" lastModifiedTime="2026-01-01T00:00:00.000Z"/>"""))}
+        </one:Section></one:Notebook></one:Notebooks>
+        """;
+
+    private JsonElement Save(string name, string format = "markdown") =>
+        JsonDocument.Parse(_tools.GetPage("page", Path.Combine(_folder, name), format: format)).RootElement;
+
+    private JsonElement Search(string query) => JsonDocument.Parse(_tools.Search(query)).RootElement;
+
+    private static List<string?> Ids(JsonElement found) =>
+        [.. found.GetProperty("results").EnumerateArray().Select(r => r.GetProperty("page_id").GetString())];
+}

@@ -4,11 +4,11 @@ using ModelContextProtocol;
 namespace OneNoteMcp.Tests;
 
 /// <summary>
-/// Output path checks. They run before any OneNote call, so these tests don't need OneNote.
+/// Output path checks. They run before any OneNote call.
 /// </summary>
 public class OutputTests
 {
-    private readonly OneNoteTools _tools = new(new OneNoteClient());
+    private readonly OneNoteTools _tools = new(new FakeOneNote());
 
     public static TheoryData<Func<OneNoteTools, string, string>> Tools => new()
     {

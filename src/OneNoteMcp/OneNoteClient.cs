@@ -12,7 +12,7 @@ namespace OneNoteMcp;
 /// - Calls are serialized: OneNote handles one COM call at a time.
 /// - COM errors become <see cref="McpException"/> with the OneNote error name, so tools report the real cause.
 /// </remarks>
-public sealed class OneNoteClient
+public sealed class OneNoteClient : IOneNoteClient
 {
     private readonly Lock _lock = new();
     private Application2Class? _app;
@@ -52,7 +52,6 @@ public sealed class OneNoteClient
     public void UpdatePageContent(string xml) =>
         Call(app => { app.UpdatePageContent(xml, DateTime.MinValue, XMLSchema.xs2013, false); return 0; });
 
-    /// <param name="permanently">Skip the notebook's recycle bin</param>
     public void DeleteHierarchy(string objectId, bool permanently = false) =>
         Call(app => { app.DeleteHierarchy(objectId, DateTime.MinValue, permanently); return 0; });
 
