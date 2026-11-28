@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace OneNoteMcp;
@@ -20,7 +21,7 @@ public sealed record SearchResult(string PageId, string PageName, string Noteboo
 /// <summary>
 /// Parses OneNote hierarchy XML (from <c>GetHierarchy</c> and <c>FindPages</c>).
 /// </summary>
-public static class Hierarchy
+public static partial class Hierarchy
 {
     public static readonly XNamespace One = "http://schemas.microsoft.com/office/onenote/2013/onenote";
 
@@ -45,7 +46,7 @@ public static class Hierarchy
     /// <param name="found">Windows Search's results</param>
     /// <remarks>
     /// - Title search finds pages the index misses, such as new pages.
-    /// - A title matches when it holds every word from <see cref="TitleWords"/>, ignoring case.
+    /// - A title matches when it contains every word from <see cref="TitleWords"/>, ignoring case. "art" matches "Party".
     /// </remarks>
     public static IReadOnlyList<SearchResult> RankSearchResults(string query, IEnumerable<SearchResult>? pages, IEnumerable<SearchResult> found)
     {
@@ -59,22 +60,33 @@ public static class Hierarchy
         return [.. titles.Concat(text).DistinctBy(p => p.PageId)];
     }
 
-    /// <summary>The words a title must hold, without quotes, a trailing <c>*</c>, or <c>AND</c>. Null when titles aren't searched.</summary>
+    /// <summary>The words a title must contain, without quotes, parentheses, a trailing <c>*</c>, <c>AND</c>, or a lone dash. Null when titles aren't searched.</summary>
     /// <remarks>
-    /// - A query with <c>OR</c>, <c>NOT</c>, a <c>-word</c>, or parentheses is text search only. Matching those in titles would need a parser for the Windows Search syntax.
+    /// - A query with <c>OR</c>, <c>NOT</c>, a <c>-word</c>, a <c>+word</c>, or a property filter such as <c>title:plan</c> is text search only. Matching those in titles would need a parser for the Windows Search syntax.
+    /// - A lone dash and parentheses are dropped, so a copied title such as "Nick Bushnell - 1:1 (draft)" still matches.
     /// </remarks>
     public static IReadOnlyList<string>? TitleWords(string query)
     {
         var words = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        if (words.Any(w => w is "OR" or "NOT" || w.StartsWith('-') || w.IndexOfAny(['(', ')']) >= 0))
+        if (words.Any(IsSearchSyntax))
         {
             return null;
         }
 
-        var cleaned = words.Where(w => w != "AND").Select(w => w.Trim('"').TrimEnd('*').Trim('"')).Where(w => w.Length > 0).ToList();
+        var cleaned = words.Where(w => w != "AND" && w.Trim('-').Length > 0)
+            .Select(w => w.Trim('"', '(', ')').TrimEnd('*').Trim('"', '(', ')'))
+            .Where(w => w.Length > 0)
+            .ToList();
         // No words left would match every title
         return cleaned.Count > 0 ? cleaned : null;
     }
+
+    private static bool IsSearchSyntax(string word) =>
+        word is "OR" or "NOT" || word.StartsWith('+') || (word.StartsWith('-') && word.Trim('-').Length > 0) || PropertyFilter().IsMatch(word);
+
+    /// <summary>A Windows Search property filter, such as <c>author:x</c>. Not <c>Re:</c> or <c>1:1</c>.</summary>
+    [GeneratedRegex(@"^[A-Za-z]+:\S")]
+    private static partial Regex PropertyFilter();
 
     private static bool IsDeleted(XElement section) =>
         IsTrue(section, "isInRecycleBin") || IsTrue(section, "isDeletedPages")

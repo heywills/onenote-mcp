@@ -32,9 +32,10 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
 
     private const int DefaultMaxResults = 20;
     private const string SearchDescription = """
-        Matches page titles that hold every query word, then page text through Windows Search, which finds indexed pages only.
+        Matches page titles that contain every query word, then page text through Windows Search, which finds indexed pages only.
         Title matches come first (in_title), then text matches, each newest first. Skips Deleted Pages. total counts all matches.
-        title_search is false for a query with OR, NOT, -word, or parentheses, which is text search only, or when OneNote couldn't list the pages.
+        title_search is false for a query with OR, NOT, -word, +word, or a property filter such as author:x, which is text search only, or when OneNote couldn't list the pages.
+        text_search is false when Windows Search failed and only title matches came back.
         """;
 
     private const string MaxResultsDescription = "Most results to return";
@@ -479,8 +480,25 @@ public sealed class OneNoteTools(OneNoteClient oneNote)
         }
 
         var pages = TitleWords(query) is null ? null : AllPages(notebookId);
-        var results = RankSearchResults(query, pages, ParseSearchResults(oneNote.FindPages(query, notebookId)));
-        return ToJson(new { Query = query, TitleSearch = pages is not null, Total = results.Count, Results = results.Take(maxResults) });
+        var found = TextMatches(query, notebookId, canFail: pages is not null);
+        var results = RankSearchResults(query, pages, found ?? []);
+        return ToJson(new
+        {
+            Query = query, TitleSearch = pages is not null, TextSearch = found is not null, Total = results.Count, Results = results.Take(maxResults),
+        });
+    }
+
+    /// <summary>Windows Search's matches. Null when it fails and <paramref name="canFail"/>, so title matches still come back.</summary>
+    private IReadOnlyList<SearchResult>? TextMatches(string query, string notebookId, bool canFail)
+    {
+        try
+        {
+            return ParseSearchResults(oneNote.FindPages(query, notebookId));
+        }
+        catch (McpException) when (canFail)
+        {
+            return null;
+        }
     }
 
     /// <summary>Every page in the scope, for title search. Null when OneNote can't list them.</summary>
